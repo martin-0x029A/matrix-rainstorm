@@ -2,6 +2,10 @@
 
 A mesmerizing Matrix-style rain animation written in C and optimized for WebAssembly (WASM). Perfect for creating an engaging background effect on your website.
 
+## 🎮 Preview
+
+Check out the live demo: [Matrix Rain Effect](https://matrix-rain-d7z.pages.dev/matrix_rain)
+
 ## ✨ Features
 
 - Written in C for optimal performance
