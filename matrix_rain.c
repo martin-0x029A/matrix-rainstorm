@@ -70,7 +70,7 @@ const char* unicode_chars[] = {
     "+", "-", "×", "÷", "=", "≠", "≤", "≥", "±", 
     "∑", "∏", "√", "∞", "∫", "∂", "∆", "∇", "∈", 
     "∉", "∋", "∅", "∧", "∨", "⊕", "⊗", "⊆", "⊇", 
-    "∝", "∴", "∵", "∃", "∀", "∩", "∪", "∼", "≈", "≅",
+    "∝", "∴", "∵", "∃", "∀", "∩", "∪", "≈", "≅",
     
     // Greek Alphabet
     "Α", "Β", "Γ", "Δ", "Θ", "Ι", "Λ", "Ξ", "Π", 
@@ -359,7 +359,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     /* Load a monospace font. Ensure "DejaVuSansMono.ttf" (or another appropriate TTF) is available. */
-    font = TTF_OpenFont("NotoSansMonoCJK-VF.ttf.ttc", FONT_SIZE);
+    font = TTF_OpenFont("matrix_font_subset.ttf", FONT_SIZE);
     if (!font) {
         printf("TTF_OpenFont Error: %s\n", TTF_GetError());
         SDL_DestroyRenderer(renderer);
