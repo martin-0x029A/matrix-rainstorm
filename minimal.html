@@ -11,9 +11,9 @@
         height: 100%;
         width: 100%;
         overflow: hidden;
-        background-color: black; /* Set the background to black initially */
+        background-color: black; /* Base black background */
       }
-      /* Make the canvas fill the entire screen and sit behind other content */
+      /* Make the canvas fill the entire screen */
       canvas {
         display: block;
         position: fixed;
@@ -21,7 +21,7 @@
         left: 0;
         width: 100%;
         height: 100%;
-        z-index: -1; /* Keeps the canvas behind any other page elements */
+        z-index: 0; /* Set to 0 so the canvas is painted above the body's background */
       }
     </style>
   </head>
