@@ -3,6 +3,7 @@
 #include <time.h>
 #include <stdbool.h>
 #include <string.h>
+#include <math.h>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
@@ -101,6 +102,24 @@ typedef struct {
     float char_update_timer; // timer used to periodically change characters
 } Column;
 
+typedef struct {
+    SDL_Point *points;
+    int num_points;
+} LightningBranch;
+
+/* Updated Lightning Effect Structures */
+typedef struct {
+    float timer;
+    float initial_timer;
+    int effect_type; // 0: bolt only, 1: full screen flash
+    SDL_Point *points;
+    int num_points;
+
+    // Precomputed branches (these won't change each frame)
+    LightningBranch *branches;
+    int num_branches;
+} LightningEffect;
+
 /* ------------------------ Global Variables ------------------------ */
 
 Column **columns = NULL;
@@ -115,6 +134,8 @@ SDL_Texture  *canvas   = NULL;  // offscreen render target for the trail effect
 
 int char_width, char_height;     // dimensions of a character (assumes monospace)
 Uint32 last_ticks = 0;
+
+LightningEffect *lightning = NULL;
 
 /* ------------------------ Utility Functions ------------------------ */
 
@@ -201,7 +222,7 @@ void update_columns(float delta) {
     num_columns = write_index;
     
     // Randomly attempt to add a new column.
-    if ((rand() % 100) < 25) {
+    if ((rand() % 100) < 20) {
         int col_index = rand() % g_screen_width;
         Column *newcol = create_column(col_index);
         if (newcol) {
@@ -294,6 +315,143 @@ void handle_events(void) {
     }
 }
 
+/* ------------------------ Lightning Effect Functions ------------------------ */
+LightningEffect* generate_lightning() {
+    LightningEffect* l = malloc(sizeof(LightningEffect));
+    if (!l) return NULL;
+    // 20% chance to be a full screen flash (effect_type == 1)
+    l->effect_type = (rand() % 5 == 0) ? 1 : 0;
+    if (l->effect_type == 1) {
+        l->timer = 0.5f;
+        l->initial_timer = 0.5f;
+    } else {
+        l->timer = 1.5f;
+        l->initial_timer = 1.5f;
+    }
+    
+    int capacity = 64;
+    SDL_Point* points = malloc(capacity * sizeof(SDL_Point));
+    if (!points) { 
+        free(l);
+        return NULL;
+    }
+    int count = 0;
+    int startX = rand() % g_screen_width;
+    int startY = 0;
+    points[count].x = startX;
+    points[count].y = startY;
+    count++;
+    
+    int currentX = startX;
+    int currentY = startY;
+    while (currentY < g_screen_height) {
+         int stepY = 10 + rand() % 16; // vertical step between 10 and 25 pixels
+         currentY += stepY;
+         int offsetX = -15 + rand() % 31; // horizontal offset between -15 and 15
+         currentX += offsetX;
+         if (currentX < 0) currentX = 0;
+         if (currentX >= g_screen_width) currentX = g_screen_width - 1;
+         if (count >= capacity) {
+             capacity *= 2;
+             SDL_Point* new_points = realloc(points, capacity * sizeof(SDL_Point));
+             if (!new_points) break;
+             points = new_points;
+         }
+         points[count].x = currentX;
+         points[count].y = currentY;
+         count++;
+         if (currentY >= g_screen_height - 20) break;
+    }
+    l->points = points;
+    l->num_points = count;
+    
+    // Generate pre‑computed branches.
+    l->branches = malloc(l->num_points * sizeof(LightningBranch));
+    l->num_branches = 0;
+    for (int i = 0; i < l->num_points - 1; i++) {
+         if (rand() % 100 < 40) {  // 40% chance to create a branch at this segment.
+             int branch_length = 2 + rand() % 4; // branch length from 2 to 5 segments.
+             SDL_Point* branch_points = malloc((branch_length + 1) * sizeof(SDL_Point));
+             if (!branch_points) continue;
+             branch_points[0] = l->points[i];
+             int bx = branch_points[0].x;
+             int by = branch_points[0].y;
+             int bcount = 1;
+             for (int j = 0; j < branch_length; j++) {
+                 int bx_new = bx + (-15 + rand() % 31);
+                 int by_new = by + 15 + rand() % 16;
+                 branch_points[bcount].x = bx_new;
+                 branch_points[bcount].y = by_new;
+                 bx = bx_new;
+                 by = by_new;
+                 bcount++;
+             }
+             l->branches[l->num_branches].points = branch_points;
+             l->branches[l->num_branches].num_points = bcount;
+             l->num_branches++;
+         }
+    }
+    
+    return l;
+}
+
+void draw_thick_line(SDL_Renderer *renderer, int x1, int y1, int x2, int y2, int thickness, SDL_Color color) {
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len == 0) return;
+    float udx = dx / len;
+    float udy = dy / len;
+    // Perpendicular vector for offset direction.
+    float px = -udy;
+    float py = udx;
+    
+    int half = thickness / 2;
+    for (int offset = -half; offset <= half; offset++) {
+        int ox1 = x1 + (int)(px * offset);
+        int oy1 = y1 + (int)(py * offset);
+        int ox2 = x2 + (int)(px * offset);
+        int oy2 = y2 + (int)(py * offset);
+        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+        SDL_RenderDrawLine(renderer, ox1, oy1, ox2, oy2);
+    }
+}
+
+void draw_glowing_lightning_line(SDL_Renderer *renderer, int x1, int y1, int x2, int y2, int base_thickness, SDL_Color baseColor) {
+    SDL_Color glowColor = baseColor;
+    // Reduce alpha for the glow layers.
+    glowColor.a = (Uint8)(baseColor.a * 0.5);
+    // Draw outer glow layers.
+    draw_thick_line(renderer, x1, y1, x2, y2, base_thickness + 6, glowColor);
+    draw_thick_line(renderer, x1, y1, x2, y2, base_thickness + 4, glowColor);
+    // Draw the main lightning line.
+    draw_thick_line(renderer, x1, y1, x2, y2, base_thickness, baseColor);
+}
+
+void draw_lightning(LightningEffect *l) {
+    // Compute the fading factor (alpha).
+    float alpha_factor = l->timer / l->initial_timer;
+    Uint8 alpha = (Uint8)(255 * alpha_factor);
+    SDL_Color white = {255, 255, 255, alpha};
+    int base_thickness = 3; // Base thickness for the main lightning line.
+    
+    // Draw the main bolt with the glowing effect.
+    for (int i = 0; i < l->num_points - 1; i++) {
+        draw_glowing_lightning_line(renderer, l->points[i].x, l->points[i].y,
+                                             l->points[i+1].x, l->points[i+1].y,
+                                             base_thickness, white);
+    }
+    // Draw the pre‑computed branches.
+    for (int i = 0; i < l->num_branches; i++) {
+         LightningBranch branch = l->branches[i];
+         for (int j = 0; j < branch.num_points - 1; j++) {
+              draw_glowing_lightning_line(renderer, branch.points[j].x, branch.points[j].y,
+                                                 branch.points[j+1].x, branch.points[j+1].y,
+                                                 base_thickness, white);
+         }
+    }
+}
+
 /* ------------------------ Main Loop ------------------------ */
 void main_loop(void *arg) {
     handle_events();
@@ -312,6 +470,36 @@ void main_loop(void *arg) {
     
     SDL_SetRenderTarget(renderer, NULL);
     SDL_RenderCopy(renderer, canvas, NULL, NULL);
+    
+    // Lightning effect integration.
+    if (lightning) {
+        lightning->timer -= delta;
+        if (lightning->effect_type == 1) { 
+            // For a full screen flash, fill the screen with white.
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            SDL_RenderFillRect(renderer, NULL);
+        } else {
+            // Draw the bolt with glowing, thick lines.
+            draw_lightning(lightning);
+        }
+        // Clean up once the lightning's timer runs out.
+        if (lightning->timer <= 0) {
+            free(lightning->points);
+            for (int i = 0; i < lightning->num_branches; i++) {
+                 free(lightning->branches[i].points);
+            }
+            free(lightning->branches);
+            free(lightning);
+            lightning = NULL;
+        }
+    } else {
+        // Lightning frequency remains as before (approx. 0.6% chance per frame).
+        if (rand() % 1000 < 6) {
+            lightning = generate_lightning();
+        }
+    }
+    
     SDL_RenderPresent(renderer);
 }
 
