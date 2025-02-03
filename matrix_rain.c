@@ -14,7 +14,7 @@
 /* ------------------------ Configuration ------------------------ */
 
 #define FONT_SIZE     16
-#define MAX_COLUMNS   100
+#define MAX_COLUMNS   10000 
 
 /* Global (dynamic) window size variables */
 int g_screen_width = 800;
@@ -181,10 +181,12 @@ void init_unicode_textures(void) {
 
 /* Update the positions and content of all falling columns */
 void update_columns(float delta) {
+    int write_index = 0;
     for (int i = 0; i < num_columns; i++) {
         Column *col = columns[i];
         col->y += col->speed * delta;
         col->char_update_timer += delta;
+        
         if (col->char_update_timer > 0.1f) {
             for (int j = 0; j < col->length; j++) {
                 if (rand() % 2 == 0) {  // 50% chance to change a character
@@ -193,36 +195,21 @@ void update_columns(float delta) {
             }
             col->char_update_timer = 0.0f;
         }
-    }
-    /* Remove any column that has moved off the bottom of the screen */
-    for (int i = 0; i < num_columns; ) {
-        Column *col = columns[i];
-        if (col->y - col->length * char_height > g_screen_height) {
-            destroy_column(col);
-            for (int j = i; j < num_columns - 1; j++) {
-                columns[j] = columns[j+1];
-            }
-            num_columns--;
+        
+        // Only keep columns that are still visible
+        if (col->y - col->length * char_height <= g_screen_height) {
+            columns[write_index++] = col;
         } else {
-            i++;
+            destroy_column(col);
         }
     }
-    /* Occasionally spawn a new column (ensuring one per horizontal cell) */
-    if (num_columns < MAX_COLUMNS && (rand() % 100) < 50) {
-        int max_col = g_screen_width / char_width;
-        int col_index = rand() % max_col;
-        bool exists = false;
-        for (int i = 0; i < num_columns; i++) {
-            if (columns[i]->col == col_index) {
-                exists = true;
-                break;
-            }
-        }
-        if (!exists) {
-            Column *newcol = create_column(col_index);
-            if (newcol) {
-                columns[num_columns++] = newcol;
-            }
+    num_columns = write_index;
+    
+    if ((rand() % 100) < 25) {
+        int col_index = rand() % g_screen_width;
+        Column *newcol = create_column(col_index);
+        if (newcol) {
+            columns[num_columns++] = newcol;
         }
     }
 }
@@ -231,40 +218,32 @@ void update_columns(float delta) {
 void render_columns(void) {
     for (int i = 0; i < num_columns; i++) {
         Column *col = columns[i];
-        int x = col->col * char_width;
+        int x = col->col;
+        
+        // Precompute the scale and offset as these are constant for the column.
+        float scale = 0.5f + 0.5f * col->depth;  // scale in [0.5, 1.0]
+        int scaled_width = (int)(char_width * scale);
+        int offset = (char_width - scaled_width) / 2;
+        
         for (int j = 0; j < col->length; j++) {
             float posY = col->y - j * char_height;
             if (posY < -char_height || posY > g_screen_height) continue;
+            
             int index = col->indices[j];
             SDL_Texture *tex = unicode_textures[index];
             if (!tex) continue;
+            
             SDL_Color color;
             if (j == 0) {
-                /* Head character: bright white */
-                color.r = 255;
-                color.g = 255;
-                color.b = 255;
-                color.a = 255;
+                // Head character: bright white.
+                color.r = 255; color.g = 255; color.b = 255; color.a = 255;
             } else {
-                /* Trail characters: green with brightness modulated by depth */
+                // Trail characters: green with brightness modulated by depth.
                 int brightness = (int)(col->depth * 200) + 55;
                 if (brightness > 255) brightness = 255;
-                color.r = 0;
-                color.g = brightness;
-                color.b = 0;
-                color.a = 255;
+                color.r = 0; color.g = brightness; color.b = 0; color.a = 255;
             }
             SDL_SetTextureColorMod(tex, color.r, color.g, color.b);
-
-            /* Calculate a dynamic width based on depth.
-             *
-             * Here, we use a simple scale factor such that when the column is "deeper"
-             * (i.e. has a lower col->depth), the character is rendered narrower.
-             * You can adjust the min_scale (here 0.5) as needed.
-             */
-            float scale = 0.5f + 0.5f * col->depth;  // scale in [0.5, 1.0]
-            int scaled_width = (int)(char_width * scale);
-            int offset = (char_width - scaled_width) / 2; // Center within the character cell
 
             SDL_Rect dst = { x + offset, (int)posY, scaled_width, char_height };
             SDL_RenderCopy(renderer, tex, NULL, &dst);
