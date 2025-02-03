@@ -20,6 +20,11 @@
 int g_screen_width = 800;
 int g_screen_height = 600;
 
+/* Add these global constants right after your configuration section */
+#define GRAVITY 10.0f
+#define TERMINAL_VELOCITY 100.0f
+#define WIND_RESPONSE 2.0f
+
 /* ------------------------ Unicode Characters Data Structure ------------------------ */
 
 const char* unicode_chars[] = {
@@ -93,10 +98,11 @@ SDL_Texture *unicode_textures[NUM_UNICODE_CHARS];
 
 /* A falling column in the Matrix rain */
 typedef struct {
-    int col;             // horizontal column index (in character cells)
-    float y;             // vertical offset (in pixels) for the head character
+    float x;             // horizontal position (in pixels) of the column's head
+    float y;             // vertical position (in pixels) for the head character
+    float vx;            // horizontal velocity (pixels per second)
+    float vy;            // vertical velocity (pixels per second)
     int length;          // number of characters in the column
-    float speed;         // falling speed (pixels per second)
     float depth;         // depth factor (0.0 to 1.0) for brightness variations
     int *indices;        // array of indices into the unicode_chars array (length = 'length')
     float char_update_timer; // timer used to periodically change characters
@@ -137,6 +143,15 @@ Uint32 last_ticks = 0;
 
 LightningEffect *lightning = NULL;
 
+/* Global Wind Effect Variables */
+float current_wind_angle = 0.0f;    // The current wind angle (in degrees)
+float target_wind_angle = 0.0f;     // The new random wind target angle
+float wind_start_angle = 0.0f;      // The starting angle at the beginning of a transition
+float wind_idle_timer = 3.0f;       // Idle time before starting a transition
+float wind_transition_timer = 0.0f; // Timer during the transition phase
+float wind_transition_duration = 0.0f; // Duration over which to smoothly transition
+bool wind_in_transition = false;    // Flag indicating whether a transition is active
+
 /* ------------------------ Utility Functions ------------------------ */
 
 /* Return a random index into the unicode_chars array */
@@ -148,12 +163,10 @@ int random_unicode_index(void) {
 Column *create_column(int col_index) {
     Column *col = malloc(sizeof(Column));
     if (!col) return NULL;
-    col->col = col_index;
-    /* Start the column at a random negative offset (so it "enters" from above) */
+    col->x = (float)col_index;
     col->y = -(rand() % g_screen_height);
-    col->length = 5 + rand() % 23;   // length between 5 and 25 characters
-    col->speed  = 50 + rand() % 150;   // speed between 50 and 200 pixels/sec
-    col->depth  = (float)(rand() % 101) / 100.0f;
+    col->length = 5 + rand() % 23;
+    col->depth = (float)(rand() % 101) / 100.0f;
     col->char_update_timer = 0.0f;
     col->indices = malloc(col->length * sizeof(int));
     if (!col->indices) {
@@ -163,6 +176,9 @@ Column *create_column(int col_index) {
     for (int i = 0; i < col->length; i++) {
         col->indices[i] = random_unicode_index();
     }
+    // Initialize vertical speed between 50 and 200 pixels/sec, and horizontal speed to 0.
+    col->vy = 50.0f + (float)(rand() % 150);
+    col->vx = 0.0f;
     return col;
 }
 
@@ -198,35 +214,65 @@ void init_unicode_textures(void) {
 /* Update the positions and content of all falling columns */
 void update_columns(float delta) {
     size_t write_index = 0;
+    int extended_margin = char_height * 50;  // Allow columns to be kept if they're within this margin.
+    
     for (size_t i = 0; i < num_columns; i++) {
         Column *col = columns[i];
-        col->y += col->speed * delta;
+
+        // Apply gravitational acceleration.
+        col->vy += GRAVITY * delta;
+        if (col->vy > TERMINAL_VELOCITY) col->vy = TERMINAL_VELOCITY;
+
+        // Compute target horizontal velocity based on current wind.
+        float target_vx = tan(current_wind_angle * M_PI / 180.0f) * col->vy;
+        col->vx += (target_vx - col->vx) * WIND_RESPONSE * delta;
+
+        // Update column position based on velocities.
+        col->x += col->vx * delta;
+        col->y += col->vy * delta;
+
         col->char_update_timer += delta;
-        
         if (col->char_update_timer > 0.1f) {
             for (int j = 0; j < col->length; j++) {
-                if (rand() % 2 == 0) {  // 50% chance to change a character
+                if (rand() % 2 == 0) {
                     col->indices[j] = random_unicode_index();
                 }
             }
             col->char_update_timer = 0.0f;
         }
-        
-        // Keep columns that are still visible.
-        if (col->y - col->length * char_height <= g_screen_height) {
+
+        // Compute the falling angle and per-letter offsets.
+        float fall_angle = atan2(col->vx, col->vy);
+        float dx = -char_height * sin(fall_angle);
+        float dy = -char_height * cos(fall_angle);
+
+        // Determine the column's bounding box.
+        float letter0_x = col->x;
+        float letter_end_x = col->x + (col->length - 1) * dx;
+        float min_x = (letter0_x < letter_end_x) ? letter0_x : letter_end_x;
+        float max_x = (letter0_x > letter_end_x) ? letter0_x : letter_end_x;
+
+        float letter0_y = col->y;
+        float letter_end_y = col->y + (col->length - 1) * dy;
+        float min_y = (letter0_y < letter_end_y) ? letter0_y : letter_end_y;
+        float max_y = (letter0_y > letter_end_y) ? letter0_y : letter_end_y;
+
+        // Keep columns if any part is visible within an extended margin.
+        if (max_y >= -extended_margin && min_y <= g_screen_height + extended_margin &&
+            max_x >= -extended_margin && min_x <= g_screen_width + extended_margin) {
             columns[write_index++] = col;
         } else {
             destroy_column(col);
         }
     }
     num_columns = write_index;
-    
-    // Randomly attempt to add a new column.
+
+    // Spawn new columns over an extended horizontal range.
+    int margin = char_height * 50;
     if ((rand() % 100) < 20) {
-        int col_index = rand() % g_screen_width;
+        int col_index = (rand() % (g_screen_width + 2 * margin)) - margin;
         Column *newcol = create_column(col_index);
         if (newcol) {
-            // Check and grow dynamic array if needed.
             if (num_columns >= columns_capacity) {
                 size_t new_capacity = (columns_capacity == 0) ? 16 : columns_capacity * 2;
                 Column **new_columns = realloc(columns, new_capacity * sizeof(Column *));
@@ -234,7 +280,6 @@ void update_columns(float delta) {
                     columns = new_columns;
                     columns_capacity = new_capacity;
                 } else {
-                    // If memory allocation fails, destroy the new column and skip adding it.
                     destroy_column(newcol);
                     return;
                 }
@@ -248,16 +293,24 @@ void update_columns(float delta) {
 void render_columns(void) {
     for (int i = 0; i < num_columns; i++) {
         Column *col = columns[i];
-        int x = col->col;
         
-        // Precompute the scale and offset as these are constant for the column.
-        float scale = 0.5f + 0.5f * col->depth;  // scale in [0.5, 1.0]
+        // Precompute scale and centering offset.
+        float scale = 0.5f + 0.5f * col->depth;
         int scaled_width = (int)(char_width * scale);
         int offset = (char_width - scaled_width) / 2;
         
+        // Compute the falling angle from the column's velocity.
+        float fall_angle = atan2(col->vx, col->vy);  // Radians relative to vertical.
+        float angle_deg = -fall_angle * 180.0f / M_PI; // Rotation in degrees.
+        
+        // Determine displacement between successive letters along the falling trajectory.
+        float dx = -char_height * sin(fall_angle);
+        float dy = -char_height * cos(fall_angle);
+        
         for (int j = 0; j < col->length; j++) {
-            float posY = col->y - j * char_height;
-            if (posY < -char_height || posY > g_screen_height) continue;
+            float letterX = col->x + j * dx;
+            float letterY = col->y + j * dy;
+            if (letterY < -char_height || letterY > g_screen_height) continue;
             
             int index = col->indices[j];
             SDL_Texture *tex = unicode_textures[index];
@@ -265,18 +318,18 @@ void render_columns(void) {
             
             SDL_Color color;
             if (j == 0) {
-                // Head character: bright white.
-                color.r = 255; color.g = 255; color.b = 255; color.a = 255;
+                color = (SDL_Color){255, 255, 255, 255};
             } else {
-                // Trail characters: green with brightness modulated by depth.
                 int brightness = (int)(col->depth * 200) + 55;
                 if (brightness > 255) brightness = 255;
-                color.r = 0; color.g = brightness; color.b = 0; color.a = 255;
+                color = (SDL_Color){0, brightness, 0, 255};
             }
             SDL_SetTextureColorMod(tex, color.r, color.g, color.b);
-
-            SDL_Rect dst = { x + offset, (int)posY, scaled_width, char_height };
-            SDL_RenderCopy(renderer, tex, NULL, &dst);
+            
+            SDL_Rect dst = { (int)letterX + offset, (int)letterY, scaled_width, char_height };
+            SDL_Point center = { dst.w / 2, dst.h / 2 };
+            
+            SDL_RenderCopyEx(renderer, tex, NULL, &dst, angle_deg, &center, SDL_FLIP_NONE);
         }
     }
 }
@@ -525,6 +578,34 @@ void main_loop(void *arg) {
     Uint32 current_ticks = SDL_GetTicks();
     float delta = (current_ticks - last_ticks) / 1000.0f;
     last_ticks = current_ticks;
+    
+    // Update global wind effect
+    if (wind_in_transition) {
+        wind_transition_timer += delta;
+        float t = wind_transition_timer / wind_transition_duration;
+        if (t >= 1.0f) {
+            current_wind_angle = target_wind_angle;
+            wind_in_transition = false;
+            // Set a new idle period (randomized between 3 and 8 seconds)
+            wind_idle_timer = 3.0f + ((float)rand()/ (float)RAND_MAX)*5.0f;
+            wind_transition_timer = 0.0f;
+            wind_transition_duration = 0.0f;
+        } else {
+            // Smooth linear interpolation between wind_start_angle and target_wind_angle
+            current_wind_angle = wind_start_angle + (target_wind_angle - wind_start_angle) * t;
+        }
+    } else {
+        wind_idle_timer -= delta;
+        if (wind_idle_timer <= 0) {
+            wind_in_transition = true;
+            // Choose a transition duration between 1 and 5 seconds
+            wind_transition_duration = 1.0f + (((float)rand() / (float)RAND_MAX) * 4.0f);
+            wind_transition_timer = 0.0f;
+            wind_start_angle = current_wind_angle;
+            // Generate a new random target between -45° and 45°
+            target_wind_angle = -45.0f + (((float)rand() / (float)RAND_MAX) * 90.0f);
+        }
+    }
     
     SDL_SetRenderTarget(renderer, canvas);
     /* Draw a translucent black rectangle for the fading trail effect */
