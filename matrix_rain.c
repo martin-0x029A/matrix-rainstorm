@@ -1,3 +1,10 @@
+/*
+ * matrix_rain.c
+ *
+ * Matrix Rain simulation with lightning effects using SDL2.
+ * All comments have been standardized for clarity and consistency.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -12,23 +19,24 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
-/* ------------------------ Configuration ------------------------ */
+/* Configuration */
+#define FONT_SIZE 16
 
-#define FONT_SIZE     16
-
-/* Global (dynamic) window size variables */
+/* Global window dimensions */
 int g_screen_width = 800;
 int g_screen_height = 600;
 
-/* Add these global constants right after your configuration section */
+/* Global physics constants */
 #define GRAVITY 10.0f
 #define TERMINAL_VELOCITY 100.0f
 #define WIND_RESPONSE 2.0f
 
-/* ------------------------ Unicode Characters Data Structure ------------------------ */
+/* Unicode Characters */
 
+/* List of Unicode characters: Hiragana, Katakana, Latin, Cyrillic, Numbers,
+   Math symbols, Greek Alphabet, and Chinese characters. */
 const char* unicode_chars[] = {
-    // Hiragana
+    /* Hiragana */
     "あ", "い", "う", "え", "お",
     "か", "き", "く", "け", "こ",
     "さ", "し", "す", "せ", "そ",
@@ -40,7 +48,7 @@ const char* unicode_chars[] = {
     "ら", "り", "る", "れ", "ろ",
     "わ", "を", "ん",
     
-    // Katakana
+    /* Katakana */
     "ア", "イ", "ウ", "エ", "オ",
     "カ", "キ", "ク", "ケ", "コ",
     "サ", "シ", "ス", "セ", "ソ",
@@ -52,34 +60,34 @@ const char* unicode_chars[] = {
     "ラ", "リ", "ル", "レ", "ロ",
     "ワ", "ヲ", "ン",
     
-    // Latin
+    /* Latin */
     "A", "B", "C", "D", "E", "F", "G", "H", "I", 
     "J", "K", "L", "M", "N", "O", "P", "Q", "R", 
-    "S", "T", "U", "V", "W", "X", "Y", "Z", "a", 
-    "b", "c", "d", "e", "f", "g", "h", "i", "j", 
-    "k", "l", "m", "n", "o", "p", "q", "r", "s", 
-    "t", "u", "v", "w", "x", "y", "z",
+    "S", "T", "U", "V", "W", "X", "Y", "Z", 
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", 
+    "j", "k", "l", "m", "n", "o", "p", "q", "r", 
+    "s", "t", "u", "v", "w", "x", "y", "z",
     
-    // Cyrillic
+    /* Cyrillic */
     "Б", "Д", "Ж", "З", "И", "Л", "У", "Ц", 
     "Ч", "Ш", "Щ", "Ъ", "Ь", "Э", "Ю", "Я",
     
-    // Numbers
+    /* Numbers */
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
     
-    // Math symbols
+    /* Math symbols */
     "+", "-", "×", "÷", "=", "≠", "≤", "≥", "±", 
     "∑", "∏", "√", "∞", "∫", "∂", "∆", "∇", "∈", 
     "∉", "∋", "∅", "∧", "∨", "⊕", "⊗", "⊆", "⊇", 
     "∝", "∴", "∵", "∃", "∀", "∩", "∪", "≈", "≅",
     
-    // Greek Alphabet
+    /* Greek Alphabet */
     "Α", "Β", "Γ", "Δ", "Θ", "Ι", "Λ", "Ξ", "Π", 
     "Σ", "Φ", "Ψ", "Ω", "α", "β", "γ", "δ", "ε", 
     "ζ", "η", "θ", "ι", "κ", "λ", "μ", "ν", "ξ", 
-    "ο", "π", "ρ", "σ", "τ", "υ", "φ", "χ", "ψ", "ω"
-
-    // Chinese Characters
+    "ο", "π", "ρ", "σ", "τ", "υ", "φ", "χ", "ψ", "ω",
+    
+    /* Chinese Characters */
     "你", "好", "我", "是", "天", "地", "人", "山", "水", "火", 
     "大", "小", "中", "国", "学", "生", "爱", "书", "车", "猫", 
     "狗", "月", "日", "年", "风", "雨", "花", "草", "树", "家",
@@ -88,46 +96,47 @@ const char* unicode_chars[] = {
     "金", "银", "玉", "石", "海", "湖", "江", "河", "山", "川",
 };
 
-
 #define NUM_UNICODE_CHARS (sizeof(unicode_chars) / sizeof(unicode_chars[0]))
 
-/* Pre‑rendered textures for each Unicode character */
+/* Pre-rendered textures for Unicode characters */
 SDL_Texture *unicode_textures[NUM_UNICODE_CHARS];
 
-/* ------------------------ Data Structures ------------------------ */
+/* Data Structures */
 
-/* A falling column in the Matrix rain */
+/* Falling column for matrix rain */
 typedef struct {
-    float x;             // horizontal position (in pixels) of the column's head
-    float y;             // vertical position (in pixels) for the head character
-    float vx;            // horizontal velocity (pixels per second)
-    float vy;            // vertical velocity (pixels per second)
-    int length;          // number of characters in the column
-    float depth;         // depth factor (0.0 to 1.0) for brightness variations
-    int *indices;        // array of indices into the unicode_chars array (length = 'length')
-    float char_update_timer; // timer used to periodically change characters
+    float x;                  /* Horizontal position (head) in pixels */
+    float y;                  /* Vertical position (head) in pixels */
+    float vx;                 /* Horizontal velocity (pixels/s) */
+    float vy;                 /* Vertical velocity (pixels/s) */
+    int length;               /* Number of characters in the column */
+    float depth;              /* Brightness factor (0.0 to 1.0) */
+    int *indices;             /* Array of indices into unicode_chars */
+    float char_update_timer;  /* Timer for character updates */
 } Column;
 
+/* Lightning branch structure */
 typedef struct {
     SDL_Point *points;
     int num_points;
 } LightningBranch;
 
-/* Updated Lightning Effect Structures */
+/* Lightning effect representation */
 typedef struct {
-    float timer;
-    float initial_timer;
-    int effect_type; // 0: bolt only, 1: full screen flash
-    SDL_Point *points;
-    int num_points;
+    float timer;              /* Remaining time for the effect */
+    float initial_timer;      /* Initial duration */
+    int effect_type;          /* 0: bolt, 1: full-screen flash */
+    SDL_Point *points;        /* Main bolt points */
+    int num_points;           /* Number of main bolt points */
 
-    // Precomputed branches (these won't change each frame)
+    /* Precomputed branches (constant during the effect) */
     LightningBranch *branches;
     int num_branches;
 } LightningEffect;
 
-/* ------------------------ Global Variables ------------------------ */
+/* Global Variables */
 
+/* Array of active falling columns */
 Column **columns = NULL;
 size_t num_columns = 0;
 size_t columns_capacity = 0;
@@ -136,30 +145,30 @@ size_t columns_capacity = 0;
 SDL_Window   *window   = NULL;
 SDL_Renderer *renderer = NULL;
 TTF_Font     *font     = NULL;
-SDL_Texture  *canvas   = NULL;  // offscreen render target for the trail effect
+SDL_Texture  *canvas   = NULL;  /* Offscreen render target for trail effect */
 
-int char_width, char_height;     // dimensions of a character (assumes monospace)
+int char_width, char_height;     /* Character dimensions (monospace) */
 Uint32 last_ticks = 0;
 
 LightningEffect *lightning = NULL;
 
-/* Global Wind Effect Variables */
-float current_wind_angle = 0.0f;    // The current wind angle (in degrees)
-float target_wind_angle = 0.0f;     // The new random wind target angle
-float wind_start_angle = 0.0f;      // The starting angle at the beginning of a transition
-float wind_idle_timer = 3.0f;       // Idle time before starting a transition
-float wind_transition_timer = 0.0f; // Timer during the transition phase
-float wind_transition_duration = 0.0f; // Duration over which to smoothly transition
-bool wind_in_transition = false;    // Flag indicating whether a transition is active
+/* Wind effect variables */
+float current_wind_angle = 0.0f;       /* Current wind angle (degrees) */
+float target_wind_angle = 0.0f;        /* Target wind angle (degrees) */
+float wind_start_angle = 0.0f;         /* Wind angle at transition start */
+float wind_idle_timer = 3.0f;          /* Idle duration before wind change */
+float wind_transition_timer = 0.0f;    /* Timer during wind transition */
+float wind_transition_duration = 0.0f; /* Transition duration */
+bool wind_in_transition = false;       /* Flag: wind is transitioning */
 
-/* ------------------------ Utility Functions ------------------------ */
+/* Utility Functions */
 
-/* Return a random index into the unicode_chars array */
+/* Returns a random index for the unicode_chars array */
 int random_unicode_index(void) {
     return rand() % NUM_UNICODE_CHARS;
 }
 
-/* Create a new falling column for a given column index */
+/* Create a new falling column at the given horizontal position */
 Column *create_column(int col_index) {
     Column *col = malloc(sizeof(Column));
     if (!col) return NULL;
@@ -176,13 +185,13 @@ Column *create_column(int col_index) {
     for (int i = 0; i < col->length; i++) {
         col->indices[i] = random_unicode_index();
     }
-    // Initialize vertical speed between 50 and 200 pixels/sec, and horizontal speed to 0.
+    /* Initialize vertical speed (50-200 pixels/s); no horizontal speed */
     col->vy = 50.0f + (float)(rand() % 150);
     col->vx = 0.0f;
     return col;
 }
 
-/* Free a column and its resources */
+/* Free the memory allocated for a column */
 void destroy_column(Column *col) {
     if (col) {
         free(col->indices);
@@ -190,47 +199,46 @@ void destroy_column(Column *col) {
     }
 }
 
-/* Initialize the pre‑rendered textures for the Unicode characters */
+/* Initialize pre-rendered textures for Unicode characters */
 void init_unicode_textures(void) {
     for (int i = 0; i < NUM_UNICODE_CHARS; i++) {
         SDL_Color white = { 255, 255, 255, 255 };
-        /* Use TTF_RenderUTF8_Solid to support UTF‑8 encoded strings */
+        /* Render UTF-8 string to surface */
         SDL_Surface *surf = TTF_RenderUTF8_Solid(font, unicode_chars[i], white);
         if (!surf) {
-            printf("Failed to render unicode char '%s': %s\n", unicode_chars[i], TTF_GetError());
+            printf("Failed to render '%s': %s\n", unicode_chars[i], TTF_GetError());
             continue;
         }
         unicode_textures[i] = SDL_CreateTextureFromSurface(renderer, surf);
         SDL_FreeSurface(surf);
     }
-    /* Use the first texture to determine character dimensions (assumes a monospace font) */
+    /* Set character dimensions based on the first texture */
     if (unicode_textures[0]) {
         SDL_QueryTexture(unicode_textures[0], NULL, NULL, &char_width, &char_height);
     }
 }
 
-/* ------------------------ Column Update & Render ------------------------ */
-
-/* Update the positions and content of all falling columns */
+/* Update falling columns: position, velocity, and character content */
 void update_columns(float delta) {
     size_t write_index = 0;
-    int extended_margin = char_height * 50;  // Allow columns to be kept if they're within this margin.
+    int extended_margin = char_height * 50;  /* Retain columns within extended bounds */
     
     for (size_t i = 0; i < num_columns; i++) {
         Column *col = columns[i];
 
-        // Apply gravitational acceleration.
+        /* Apply gravity */
         col->vy += GRAVITY * delta;
         if (col->vy > TERMINAL_VELOCITY) col->vy = TERMINAL_VELOCITY;
 
-        // Compute target horizontal velocity based on current wind.
+        /* Adjust horizontal velocity based on wind */
         float target_vx = tan(current_wind_angle * M_PI / 180.0f) * col->vy;
         col->vx += (target_vx - col->vx) * WIND_RESPONSE * delta;
 
-        // Update column position based on velocities.
+        /* Update position */
         col->x += col->vx * delta;
         col->y += col->vy * delta;
 
+        /* Update characters periodically */
         col->char_update_timer += delta;
         if (col->char_update_timer > 0.1f) {
             for (int j = 0; j < col->length; j++) {
@@ -241,12 +249,12 @@ void update_columns(float delta) {
             col->char_update_timer = 0.0f;
         }
 
-        // Compute the falling angle and per-letter offsets.
+        /* Compute fall angle and letter offsets */
         float fall_angle = atan2(col->vx, col->vy);
         float dx = -char_height * sin(fall_angle);
         float dy = -char_height * cos(fall_angle);
 
-        // Determine the column's bounding box.
+        /* Calculate bounding box for the column */
         float letter0_x = col->x;
         float letter_end_x = col->x + (col->length - 1) * dx;
         float min_x = (letter0_x < letter_end_x) ? letter0_x : letter_end_x;
@@ -257,7 +265,7 @@ void update_columns(float delta) {
         float min_y = (letter0_y < letter_end_y) ? letter0_y : letter_end_y;
         float max_y = (letter0_y > letter_end_y) ? letter0_y : letter_end_y;
 
-        // Keep columns if any part is visible within an extended margin.
+        /* Retain columns that are within the extended margin */
         if (max_y >= -extended_margin && min_y <= g_screen_height + extended_margin &&
             max_x >= -extended_margin && min_x <= g_screen_width + extended_margin) {
             columns[write_index++] = col;
@@ -267,7 +275,7 @@ void update_columns(float delta) {
     }
     num_columns = write_index;
 
-    // Spawn new columns over an extended horizontal range.
+    /* Occasionally spawn a new column over an extended range */
     int margin = char_height * 50;
     if ((rand() % 100) < 20) {
         int col_index = (rand() % (g_screen_width + 2 * margin)) - margin;
@@ -289,21 +297,21 @@ void update_columns(float delta) {
     }
 }
 
-/* Render all columns onto the current render target */
+/* Render all falling columns */
 void render_columns(void) {
     for (int i = 0; i < num_columns; i++) {
         Column *col = columns[i];
         
-        // Precompute scale and centering offset.
+        /* Calculate scale and horizontal offset based on depth */
         float scale = 0.5f + 0.5f * col->depth;
         int scaled_width = (int)(char_width * scale);
         int offset = (char_width - scaled_width) / 2;
         
-        // Compute the falling angle from the column's velocity.
-        float fall_angle = atan2(col->vx, col->vy);  // Radians relative to vertical.
-        float angle_deg = -fall_angle * 180.0f / M_PI; // Rotation in degrees.
+        /* Determine fall rotation angle */
+        float fall_angle = atan2(col->vx, col->vy);
+        float angle_deg = -fall_angle * 180.0f / M_PI;
         
-        // Determine displacement between successive letters along the falling trajectory.
+        /* Calculate displacement between successive characters */
         float dx = -char_height * sin(fall_angle);
         float dy = -char_height * cos(fall_angle);
         
@@ -318,8 +326,10 @@ void render_columns(void) {
             
             SDL_Color color;
             if (j == 0) {
+                /* Head of column: white */
                 color = (SDL_Color){255, 255, 255, 255};
             } else {
+                /* Tail: green varying by depth */
                 int brightness = (int)(col->depth * 200) + 55;
                 if (brightness > 255) brightness = 255;
                 color = (SDL_Color){0, brightness, 0, 255};
@@ -334,7 +344,7 @@ void render_columns(void) {
     }
 }
 
-/* ------------------------ Event Handling for Resizing ------------------------ */
+/* Handle SDL events (quit and window resize) */
 void handle_events(void) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -368,8 +378,11 @@ void handle_events(void) {
     }
 }
 
-/* ------------------------ Lightning Effect Functions ------------------------ */
-SDL_Point* generate_fractal_lightning_points(int startX, int startY, int endX, int endY, float displacement, int detail, int *num_points) {
+/* Lightning Effect Functions */
+
+/* Generate fractal points for a lightning bolt */
+SDL_Point* generate_fractal_lightning_points(int startX, int startY, int endX, int endY,
+                                               float displacement, int detail, int *num_points) {
     int current_count = 2;
     SDL_Point *points = malloc(current_count * sizeof(SDL_Point));
     if (!points) return NULL;
@@ -399,17 +412,17 @@ SDL_Point* generate_fractal_lightning_points(int startX, int startY, int endX, i
                 perpY = dx / norm;
             }
             
-            // Calculate the effective offset range.
+            /* Limit offset magnitude */
             float effective_range = displacement;
             if (fabs((float)(B.x - A.x)) > 0.001f && fabs(perpX) > 1e-6) {
                 float max_allowed = (fabs((float)(B.x - A.x)) / 2.0f) / fabs(perpX);
                 effective_range = fmin(displacement, max_allowed);
             }
-            float random_offset = ((float)rand()/(float)RAND_MAX) * 2.0f * effective_range - effective_range;
+            float random_offset = ((float)rand() / (float)RAND_MAX) * 2.0f * effective_range - effective_range;
             midX += perpX * random_offset;
             midY += perpY * random_offset;
             
-            // Ensure vertical ordering: force midY to be strictly between A.y and B.y
+            /* Enforce vertical ordering */
             if (midY < A.y + 1) midY = A.y + 1;
             if (midY > B.y - 1) midY = B.y - 1;
             
@@ -426,54 +439,53 @@ SDL_Point* generate_fractal_lightning_points(int startX, int startY, int endX, i
     return points;
 }
 
+/* Create a new lightning effect */
 LightningEffect* generate_lightning() {
     LightningEffect* l = malloc(sizeof(LightningEffect));
     if (!l) return NULL;
-    // 20% chance to be a full screen flash (effect_type == 1)
+    /* 50% chance for full-screen flash (effect_type 1), otherwise bolt (0) */
     l->effect_type = (rand() % 2 == 0) ? 1 : 0;
-    float initial_displacement = 0.0f; // Declare here for branch generation
+    float initial_displacement = 0.0f;
     if (l->effect_type == 1) {
         l->timer = 0.5f;
         l->initial_timer = 0.5f;
-        // For full screen flash, no bolt is needed.
         l->points = NULL;
         l->num_points = 0;
     } else {
         l->timer = 1.5f;
         l->initial_timer = 1.5f;
-        // Generate a realistic fractal lightning bolt.
+        /* Generate fractal bolt */
         int startX = rand() % g_screen_width;
         int startY = 0;
         int endX = rand() % g_screen_width;
-        // End somewhere between 70% and 100% of the screen height.
+        /* Target between 70% and 100% of screen height */
         int endY = (g_screen_height * (70 + rand() % 31)) / 100;
         initial_displacement = g_screen_width / 8.0f;
-        int detail = 6; // Recursion depth for fractal detail.
-        l->points = generate_fractal_lightning_points(startX, startY, endX, endY, initial_displacement, detail, &l->num_points);
+        int detail = 6;  /* Recursion depth */
+        l->points = generate_fractal_lightning_points(startX, startY, endX, endY,
+                                                      initial_displacement, detail, &l->num_points);
     }
     
-    // Pre‑allocate space for branches.
+    /* Pre-allocate space for branches */
     l->branches = malloc((l->num_points ? l->num_points : 1) * sizeof(LightningBranch));
     l->num_branches = 0;
     if (l->points && l->num_points > 1) {
         for (int i = 0; i < l->num_points - 1; i++) {
-            if (rand() % 100 < 25) {  // 25% chance to create a branch on this segment.
+            if (rand() % 100 < 25) {  /* 25% chance to spawn a branch */
                 SDL_Point start = l->points[i];
-                // Instead of basing the branch angle on the segment direction,
-                // force the branch to point within a narrow, mostly‐vertical cone.
-                // This ensures branch segments extend downward without excessive horizontal deviation.
+                /* Force branch to be mostly downward */
                 float branch_angle = 1.5708f - 0.7854f + ((float)rand()/(float)RAND_MAX) * (0.7854f * 2);
-                // branch_angle now is in [0.7854, 2.3562] radians (approx. [45°,135°]).
-                int branch_length = 50 + rand() % 51; // Length between 50 and 100 pixels.
+                int branch_length = 50 + rand() % 51;  /* 50 to 100 pixels */
                 int branch_endX = start.x + (int)(branch_length * cosf(branch_angle));
                 int branch_endY = start.y + (int)(branch_length * sinf(branch_angle));
                 if (branch_endX < 0) branch_endX = 0;
                 if (branch_endX >= g_screen_width) branch_endX = g_screen_width - 1;
-                // Make sure the branch goes downward from its starting point.
                 if (branch_endY < start.y + 1) branch_endY = start.y + 1;
                 if (branch_endY >= g_screen_height) branch_endY = g_screen_height - 1;
                 int branch_num_points = 0;
-                SDL_Point *branch_points = generate_fractal_lightning_points(start.x, start.y, branch_endX, branch_endY, initial_displacement / 2.0f, 3, &branch_num_points);
+                SDL_Point *branch_points = generate_fractal_lightning_points(start.x, start.y,
+                                                                             branch_endX, branch_endY,
+                                                                             initial_displacement / 2.0f, 3, &branch_num_points);
                 if (branch_points && branch_num_points >= 2) {
                     l->branches[l->num_branches].points = branch_points;
                     l->branches[l->num_branches].num_points = branch_num_points;
@@ -488,7 +500,9 @@ LightningEffect* generate_lightning() {
     return l;
 }
 
-void draw_filled_thick_line(SDL_Renderer *renderer, float x1, float y1, float x2, float y2, float thickness, SDL_Color color) {
+/* Draw a thick filled line */
+void draw_filled_thick_line(SDL_Renderer *renderer, float x1, float y1, float x2, float y2,
+                            float thickness, SDL_Color color) {
     float dx = x2 - x1;
     float dy = y2 - y1;
     float len = sqrtf(dx * dx + dy * dy);
@@ -496,11 +510,11 @@ void draw_filled_thick_line(SDL_Renderer *renderer, float x1, float y1, float x2
     float udx = dx / len;
     float udy = dy / len;
     float half_thickness = thickness / 2.0f;
-    // Perpendicular vector for offset
+    /* Compute perpendicular offset */
     float px = -udy * half_thickness;
     float py = udx * half_thickness;
     
-    // Define the four vertices of the quad
+    /* Define quad vertices */
     SDL_Vertex vertices[4];
     vertices[0].position.x = x1 + px;
     vertices[0].position.y = y1 + py;
@@ -511,39 +525,44 @@ void draw_filled_thick_line(SDL_Renderer *renderer, float x1, float y1, float x2
     vertices[3].position.x = x1 - px;
     vertices[3].position.y = y1 - py;
     
-    // Set vertex colors
+    /* Set vertex color */
     for (int i = 0; i < 4; i++) {
         vertices[i].color = color;
     }
     
-    // Define two triangles to fill the quad
+    /* Render quad as two triangles */
     int indices[6] = {0, 1, 2, 0, 2, 3};
     
     SDL_RenderGeometry(renderer, NULL, vertices, 4, indices, 6);
 }
 
-void draw_glowing_lightning_line(SDL_Renderer *renderer, int x1, int y1, int x2, int y2, int base_thickness, SDL_Color baseColor) {
+/* Draw a lightning line with glowing effect */
+void draw_glowing_lightning_line(SDL_Renderer *renderer, int x1, int y1, int x2, int y2,
+                                 int base_thickness, SDL_Color baseColor) {
     SDL_Color glowColor = baseColor;
-    // Reduce alpha for the glow layers.
+    /* Lower alpha for glow layers */
     glowColor.a = (Uint8)(baseColor.a * 0.5);
-    // Draw outer glow layers with slightly thicker lines.
-    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2, base_thickness + 6, glowColor);
-    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2, base_thickness + 4, glowColor);
-    // Draw the main lightning line.
-    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2, base_thickness, baseColor);
+    /* Draw outer glow layers */
+    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2,
+                           base_thickness + 6, glowColor);
+    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2,
+                           base_thickness + 4, glowColor);
+    /* Draw the main line */
+    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2,
+                           base_thickness, baseColor);
 }
 
+/* Render the lightning effect and its branches */
 void draw_lightning(LightningEffect *l) {
-    // Compute the fading factor (alpha).
+    /* Compute fade alpha */
     float alpha_factor = l->timer / l->initial_timer;
     Uint8 alpha = (Uint8)(255 * alpha_factor);
     SDL_Color white = {255, 255, 255, alpha};
-    int base_thickness = 3; // Base thickness for the main lightning line.
+    int base_thickness = 3;  /* Base line thickness */
 
-    // Draw the main bolt with a glowing effect.
+    /* Draw main bolt with glow */
     for (int i = 0; i < l->num_points - 1; i++) {
          float t = 1.0f;
-         // Taper the endpoints: the very first and last segments are drawn thinner.
          if (i == 0 || i == l->num_points - 2) {
              t = 0.5f;
          }
@@ -554,7 +573,7 @@ void draw_lightning(LightningEffect *l) {
                                      l->points[i+1].x, l->points[i+1].y,
                                      seg_thickness, white);
     }
-    // Draw the pre‑computed branches.
+    /* Render branches */
     for (int i = 0; i < l->num_branches; i++) {
          LightningBranch branch = l->branches[i];
          for (int j = 0; j < branch.num_points - 1; j++) {
@@ -572,43 +591,39 @@ void draw_lightning(LightningEffect *l) {
     }
 }
 
-/* ------------------------ Main Loop ------------------------ */
+/* Main loop: handle events, update simulation, and render scene */
 void main_loop(void *arg) {
     handle_events();
     Uint32 current_ticks = SDL_GetTicks();
     float delta = (current_ticks - last_ticks) / 1000.0f;
     last_ticks = current_ticks;
     
-    // Update global wind effect
+    /* Update wind effect */
     if (wind_in_transition) {
         wind_transition_timer += delta;
         float t = wind_transition_timer / wind_transition_duration;
         if (t >= 1.0f) {
             current_wind_angle = target_wind_angle;
             wind_in_transition = false;
-            // Set a new idle period (randomized between 3 and 8 seconds)
-            wind_idle_timer = 3.0f + ((float)rand()/ (float)RAND_MAX)*5.0f;
+            wind_idle_timer = 3.0f + ((float)rand() / (float)RAND_MAX) * 5.0f;
             wind_transition_timer = 0.0f;
             wind_transition_duration = 0.0f;
         } else {
-            // Smooth linear interpolation between wind_start_angle and target_wind_angle
             current_wind_angle = wind_start_angle + (target_wind_angle - wind_start_angle) * t;
         }
     } else {
         wind_idle_timer -= delta;
         if (wind_idle_timer <= 0) {
             wind_in_transition = true;
-            // Choose a transition duration between 1 and 5 seconds
             wind_transition_duration = 1.0f + (((float)rand() / (float)RAND_MAX) * 4.0f);
             wind_transition_timer = 0.0f;
             wind_start_angle = current_wind_angle;
-            // Generate a new random target between -45° and 45°
             target_wind_angle = -45.0f + (((float)rand() / (float)RAND_MAX) * 90.0f);
         }
     }
     
     SDL_SetRenderTarget(renderer, canvas);
-    /* Draw a translucent black rectangle for the fading trail effect */
+    /* Apply fade effect for trail */
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 50);
     SDL_RenderFillRect(renderer, NULL);
@@ -619,24 +634,19 @@ void main_loop(void *arg) {
     SDL_SetRenderTarget(renderer, NULL);
     SDL_RenderCopy(renderer, canvas, NULL, NULL);
     
-    // Lightning effect integration.
+    /* Handle lightning effect */
     if (lightning) {
         lightning->timer -= delta;
         if (lightning->effect_type == 1) { 
-            // Fading full-screen flash effect.
             float alpha_factor = lightning->timer / lightning->initial_timer;
-            if (alpha_factor < 0) { 
-                alpha_factor = 0;
-            }
+            if (alpha_factor < 0) alpha_factor = 0;
             Uint8 fade_alpha = (Uint8)(255 * alpha_factor);
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
             SDL_SetRenderDrawColor(renderer, 255, 255, 255, fade_alpha);
             SDL_RenderFillRect(renderer, NULL);
         } else {
-            // Draw the bolt with glowing, thick lines.
             draw_lightning(lightning);
         }
-        // Clean up once the lightning's timer runs out.
         if (lightning->timer <= 0) {
             free(lightning->points);
             for (int i = 0; i < lightning->num_branches; i++) {
@@ -647,7 +657,7 @@ void main_loop(void *arg) {
             lightning = NULL;
         }
     } else {
-        // Lightning frequency remains as before (approx. 0.6% chance per frame).
+        /* Approximately 0.6% chance per frame to spawn lightning */
         if (rand() % 1000 < 6) {
             lightning = generate_lightning();
         }
@@ -656,9 +666,9 @@ void main_loop(void *arg) {
     SDL_RenderPresent(renderer);
 }
 
-/* ------------------------ Main Function ------------------------ */
+/* Main entry point */
 int main(int argc, char *argv[]) {
-    printf("YARRRRRRR\n");
+    printf("Matrix Rain starting...\n");
     srand((unsigned)time(NULL));
     
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -672,13 +682,13 @@ int main(int argc, char *argv[]) {
     }
     
 #ifdef __EMSCRIPTEN__
-    // Set SDL_GL attributes to create an OpenGL ES context for WebGL.
+    /* Set attributes for WebGL/OpenGL ES */
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 #endif
     
-    // Create a window with the SDL_WINDOW_OPENGL flag to enable WebGL.
+    /* Create SDL window */
     window = SDL_CreateWindow("Matrix Rain Screen", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                 g_screen_width, g_screen_height,
                                 SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
@@ -689,7 +699,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Create a renderer with flags for hardware acceleration, vsync, and render targets.
+    /* Create renderer with hardware acceleration and vsync */
     renderer = SDL_CreateRenderer(window, -1,
                   SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
     if (!renderer) {
@@ -698,14 +708,6 @@ int main(int argc, char *argv[]) {
         TTF_Quit();
         SDL_Quit();
         return 1;
-    }
-    
-    // After creating the renderer
-    SDL_RendererInfo info;
-    if (SDL_GetRendererInfo(renderer, &info) == 0) {
-        printf("Renderer name: %s\n", info.name);
-    } else {
-        printf("SDL_GetRendererInfo error: %s\n", SDL_GetError());
     }
     
     font = TTF_OpenFont("matrix_font_subset.ttf", FONT_SIZE);
@@ -738,7 +740,7 @@ int main(int argc, char *argv[]) {
     
     last_ticks = SDL_GetTicks();
     
-    // Initialize the dynamic array for columns.
+    /* Allocate array for falling columns */
     columns_capacity = 16;
     columns = malloc(columns_capacity * sizeof(Column *));
     if (!columns) {
@@ -756,11 +758,11 @@ int main(int argc, char *argv[]) {
 #else
     while (1) {
         main_loop(NULL);
-        SDL_Delay(16);  // ~60 FPS
+        SDL_Delay(16);  /* ~60 FPS */
     }
 #endif
     
-    // Cleanup (this section is unreachable in a browser, but included for completeness)
+    /* Cleanup (unreachable in some environments) */
     for (int i = 0; i < NUM_UNICODE_CHARS; i++) {
         if (unicode_textures[i])
             SDL_DestroyTexture(unicode_textures[i]);
