@@ -14,7 +14,6 @@
 /* ------------------------ Configuration ------------------------ */
 
 #define FONT_SIZE     16
-#define MAX_COLUMNS   10000 
 
 /* Global (dynamic) window size variables */
 int g_screen_width = 800;
@@ -22,10 +21,6 @@ int g_screen_height = 600;
 
 /* ------------------------ Unicode Characters Data Structure ------------------------ */
 
-/*
- * Define an array of Unicode characters (UTF‑8 encoded) that you want to appear.
- * You can add any Unicode strings here (e.g. Japanese, Chinese, emoji, symbols, etc.).
- */
 const char* unicode_chars[] = {
     // Hiragana
     "あ", "い", "う", "え", "お",
@@ -108,9 +103,9 @@ typedef struct {
 
 /* ------------------------ Global Variables ------------------------ */
 
-/* Active columns (stored as pointers) */
-Column *columns[MAX_COLUMNS];
-int num_columns = 0;
+Column **columns = NULL;
+size_t num_columns = 0;
+size_t columns_capacity = 0;
 
 /* SDL objects */
 SDL_Window   *window   = NULL;
@@ -181,8 +176,8 @@ void init_unicode_textures(void) {
 
 /* Update the positions and content of all falling columns */
 void update_columns(float delta) {
-    int write_index = 0;
-    for (int i = 0; i < num_columns; i++) {
+    size_t write_index = 0;
+    for (size_t i = 0; i < num_columns; i++) {
         Column *col = columns[i];
         col->y += col->speed * delta;
         col->char_update_timer += delta;
@@ -196,7 +191,7 @@ void update_columns(float delta) {
             col->char_update_timer = 0.0f;
         }
         
-        // Only keep columns that are still visible
+        // Keep columns that are still visible.
         if (col->y - col->length * char_height <= g_screen_height) {
             columns[write_index++] = col;
         } else {
@@ -205,10 +200,24 @@ void update_columns(float delta) {
     }
     num_columns = write_index;
     
+    // Randomly attempt to add a new column.
     if ((rand() % 100) < 25) {
         int col_index = rand() % g_screen_width;
         Column *newcol = create_column(col_index);
         if (newcol) {
+            // Check and grow dynamic array if needed.
+            if (num_columns >= columns_capacity) {
+                size_t new_capacity = (columns_capacity == 0) ? 16 : columns_capacity * 2;
+                Column **new_columns = realloc(columns, new_capacity * sizeof(Column *));
+                if (new_columns) {
+                    columns = new_columns;
+                    columns_capacity = new_capacity;
+                } else {
+                    // If memory allocation fails, destroy the new column and skip adding it.
+                    destroy_column(newcol);
+                    return;
+                }
+            }
             columns[num_columns++] = newcol;
         }
     }
@@ -337,7 +346,6 @@ int main(int argc, char *argv[]) {
         SDL_Quit();
         return 1;
     }
-    /* Load a monospace font. Ensure "DejaVuSansMono.ttf" (or another appropriate TTF) is available. */
     font = TTF_OpenFont("matrix_font_subset.ttf", FONT_SIZE);
     if (!font) {
         printf("TTF_OpenFont Error: %s\n", TTF_GetError());
@@ -348,10 +356,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    /* Initialize Unicode textures */
     init_unicode_textures();
     
-    /* Create an offscreen canvas texture for the trail effect */
     canvas = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
                                g_screen_width, g_screen_height);
     if (!canvas) {
@@ -370,6 +376,19 @@ int main(int argc, char *argv[]) {
     
     last_ticks = SDL_GetTicks();
 
+    // Initialize the dynamic array for columns.
+    columns_capacity = 16;
+    columns = malloc(columns_capacity * sizeof(Column *));
+    if (!columns) {
+        printf("Failed to allocate columns array.\n");
+        TTF_CloseFont(font);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        TTF_Quit();
+        SDL_Quit();
+        return 1;
+    }
+    
 #ifdef __EMSCRIPTEN__
     emscripten_set_main_loop_arg(main_loop, NULL, 0, 1);
 #else
@@ -379,14 +398,16 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    /* Cleanup Unicode textures */
+    // Cleanup Unicode textures.
     for (int i = 0; i < NUM_UNICODE_CHARS; i++) {
         if (unicode_textures[i])
             SDL_DestroyTexture(unicode_textures[i]);
     }
-    for (int i = 0; i < num_columns; i++) {
+    // Clean up and free all columns.
+    for (size_t i = 0; i < num_columns; i++) {
         destroy_column(columns[i]);
     }
+    free(columns);
     if (canvas) SDL_DestroyTexture(canvas);
     if (font) TTF_CloseFont(font);
     if (renderer) SDL_DestroyRenderer(renderer);
