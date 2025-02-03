@@ -660,7 +660,7 @@ void main_loop(void *arg) {
 int main(int argc, char *argv[]) {
     printf("YARRRRRRR\n");
     srand((unsigned)time(NULL));
-
+    
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         printf("SDL_Init Error: %s\n", SDL_GetError());
         return 1;
@@ -670,16 +670,28 @@ int main(int argc, char *argv[]) {
         SDL_Quit();
         return 1;
     }
-
+    
+#ifdef __EMSCRIPTEN__
+    // Set SDL_GL attributes to create an OpenGL ES context for WebGL.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#endif
+    
+    // Create a window with the SDL_WINDOW_OPENGL flag to enable WebGL.
     window = SDL_CreateWindow("Matrix Rain Screen", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                g_screen_width, g_screen_height, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+                                g_screen_width, g_screen_height,
+                                SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
     if (!window) {
         printf("SDL_CreateWindow Error: %s\n", SDL_GetError());
         TTF_Quit();
         SDL_Quit();
         return 1;
     }
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    
+    // Create a renderer with flags for hardware acceleration, vsync, and render targets.
+    renderer = SDL_CreateRenderer(window, -1,
+                  SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
     if (!renderer) {
         printf("SDL_CreateRenderer Error: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
@@ -687,6 +699,15 @@ int main(int argc, char *argv[]) {
         SDL_Quit();
         return 1;
     }
+    
+    // After creating the renderer
+    SDL_RendererInfo info;
+    if (SDL_GetRendererInfo(renderer, &info) == 0) {
+        printf("Renderer name: %s\n", info.name);
+    } else {
+        printf("SDL_GetRendererInfo error: %s\n", SDL_GetError());
+    }
+    
     font = TTF_OpenFont("matrix_font_subset.ttf", FONT_SIZE);
     if (!font) {
         printf("TTF_OpenFont Error: %s\n", TTF_GetError());
@@ -716,7 +737,7 @@ int main(int argc, char *argv[]) {
     SDL_SetRenderTarget(renderer, NULL);
     
     last_ticks = SDL_GetTicks();
-
+    
     // Initialize the dynamic array for columns.
     columns_capacity = 16;
     columns = malloc(columns_capacity * sizeof(Column *));
@@ -738,13 +759,12 @@ int main(int argc, char *argv[]) {
         SDL_Delay(16);  // ~60 FPS
     }
 #endif
-
-    // Cleanup Unicode textures.
+    
+    // Cleanup (this section is unreachable in a browser, but included for completeness)
     for (int i = 0; i < NUM_UNICODE_CHARS; i++) {
         if (unicode_textures[i])
             SDL_DestroyTexture(unicode_textures[i]);
     }
-    // Clean up and free all columns.
     for (size_t i = 0; i < num_columns; i++) {
         destroy_column(columns[i]);
     }
