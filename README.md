@@ -1,6 +1,6 @@
 # Matrix Rain 🌧
 
-A mesmerizing Matrix-style rain animation written in C, now packed with enhanced physics effects and fractal lightning. Optimized for WebAssembly (WASM) and powered by SDL2, this project is perfect for creating an engaging background effect on your website.
+A Matrix-style rain animation written in C, now packed with enhanced physics effects and fractal lightning. Optimized for WebAssembly (WASM) and powered by SDL2, this project is perfect for creating an engaging background effect on your website.
 
 ## 🎮 Preview
 
