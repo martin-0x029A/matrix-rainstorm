@@ -316,116 +316,168 @@ void handle_events(void) {
 }
 
 /* ------------------------ Lightning Effect Functions ------------------------ */
+SDL_Point* generate_fractal_lightning_points(int startX, int startY, int endX, int endY, float displacement, int detail, int *num_points) {
+    int current_count = 2;
+    SDL_Point *points = malloc(current_count * sizeof(SDL_Point));
+    if (!points) return NULL;
+    points[0].x = startX; points[0].y = startY;
+    points[1].x = endX;   points[1].y = endY;
+    
+    for (int i = 0; i < detail; i++) {
+        int new_count = current_count * 2 - 1;
+        SDL_Point *new_points = malloc(new_count * sizeof(SDL_Point));
+        if (!new_points) {
+            free(points);
+            return NULL;
+        }
+        new_points[0] = points[0];
+        for (int j = 0; j < current_count - 1; j++) {
+            SDL_Point A = points[j];
+            SDL_Point B = points[j+1];
+            float midX = (A.x + B.x) / 2.0f;
+            float midY = (A.y + B.y) / 2.0f;
+            
+            float dx = B.x - A.x;
+            float dy = B.y - A.y;
+            float norm = sqrtf(dx * dx + dy * dy);
+            float perpX = 0, perpY = 0;
+            if (norm != 0) {
+                perpX = -dy / norm;
+                perpY = dx / norm;
+            }
+            
+            // Calculate the effective offset range.
+            float effective_range = displacement;
+            if (fabs((float)(B.x - A.x)) > 0.001f && fabs(perpX) > 1e-6) {
+                float max_allowed = (fabs((float)(B.x - A.x)) / 2.0f) / fabs(perpX);
+                effective_range = fmin(displacement, max_allowed);
+            }
+            float random_offset = ((float)rand()/(float)RAND_MAX) * 2.0f * effective_range - effective_range;
+            midX += perpX * random_offset;
+            midY += perpY * random_offset;
+            
+            // Ensure vertical ordering: force midY to be strictly between A.y and B.y
+            if (midY < A.y + 1) midY = A.y + 1;
+            if (midY > B.y - 1) midY = B.y - 1;
+            
+            new_points[j * 2 + 1].x = (int)midX;
+            new_points[j * 2 + 1].y = (int)midY;
+            new_points[j * 2 + 2] = B;
+        }
+        free(points);
+        points = new_points;
+        current_count = new_count;
+        displacement /= 2.0f;
+    }
+    *num_points = current_count;
+    return points;
+}
+
 LightningEffect* generate_lightning() {
     LightningEffect* l = malloc(sizeof(LightningEffect));
     if (!l) return NULL;
     // 20% chance to be a full screen flash (effect_type == 1)
-    l->effect_type = (rand() % 5 == 0) ? 1 : 0;
+    l->effect_type = (rand() % 2 == 0) ? 1 : 0;
+    float initial_displacement = 0.0f; // Declare here for branch generation
     if (l->effect_type == 1) {
         l->timer = 0.5f;
         l->initial_timer = 0.5f;
+        // For full screen flash, no bolt is needed.
+        l->points = NULL;
+        l->num_points = 0;
     } else {
         l->timer = 1.5f;
         l->initial_timer = 1.5f;
+        // Generate a realistic fractal lightning bolt.
+        int startX = rand() % g_screen_width;
+        int startY = 0;
+        int endX = rand() % g_screen_width;
+        // End somewhere between 70% and 100% of the screen height.
+        int endY = (g_screen_height * (70 + rand() % 31)) / 100;
+        initial_displacement = g_screen_width / 8.0f;
+        int detail = 6; // Recursion depth for fractal detail.
+        l->points = generate_fractal_lightning_points(startX, startY, endX, endY, initial_displacement, detail, &l->num_points);
     }
     
-    int capacity = 64;
-    SDL_Point* points = malloc(capacity * sizeof(SDL_Point));
-    if (!points) { 
-        free(l);
-        return NULL;
-    }
-    int count = 0;
-    int startX = rand() % g_screen_width;
-    int startY = 0;
-    points[count].x = startX;
-    points[count].y = startY;
-    count++;
-    
-    int currentX = startX;
-    int currentY = startY;
-    while (currentY < g_screen_height) {
-         int stepY = 10 + rand() % 16; // vertical step between 10 and 25 pixels
-         currentY += stepY;
-         int offsetX = -15 + rand() % 31; // horizontal offset between -15 and 15
-         currentX += offsetX;
-         if (currentX < 0) currentX = 0;
-         if (currentX >= g_screen_width) currentX = g_screen_width - 1;
-         if (count >= capacity) {
-             capacity *= 2;
-             SDL_Point* new_points = realloc(points, capacity * sizeof(SDL_Point));
-             if (!new_points) break;
-             points = new_points;
-         }
-         points[count].x = currentX;
-         points[count].y = currentY;
-         count++;
-         if (currentY >= g_screen_height - 20) break;
-    }
-    l->points = points;
-    l->num_points = count;
-    
-    // Generate pre‑computed branches.
-    l->branches = malloc(l->num_points * sizeof(LightningBranch));
+    // Pre‑allocate space for branches.
+    l->branches = malloc((l->num_points ? l->num_points : 1) * sizeof(LightningBranch));
     l->num_branches = 0;
-    for (int i = 0; i < l->num_points - 1; i++) {
-         if (rand() % 100 < 40) {  // 40% chance to create a branch at this segment.
-             int branch_length = 2 + rand() % 4; // branch length from 2 to 5 segments.
-             SDL_Point* branch_points = malloc((branch_length + 1) * sizeof(SDL_Point));
-             if (!branch_points) continue;
-             branch_points[0] = l->points[i];
-             int bx = branch_points[0].x;
-             int by = branch_points[0].y;
-             int bcount = 1;
-             for (int j = 0; j < branch_length; j++) {
-                 int bx_new = bx + (-15 + rand() % 31);
-                 int by_new = by + 15 + rand() % 16;
-                 branch_points[bcount].x = bx_new;
-                 branch_points[bcount].y = by_new;
-                 bx = bx_new;
-                 by = by_new;
-                 bcount++;
-             }
-             l->branches[l->num_branches].points = branch_points;
-             l->branches[l->num_branches].num_points = bcount;
-             l->num_branches++;
-         }
+    if (l->points && l->num_points > 1) {
+        for (int i = 0; i < l->num_points - 1; i++) {
+            if (rand() % 100 < 25) {  // 25% chance to create a branch on this segment.
+                SDL_Point start = l->points[i];
+                // Instead of basing the branch angle on the segment direction,
+                // force the branch to point within a narrow, mostly‐vertical cone.
+                // This ensures branch segments extend downward without excessive horizontal deviation.
+                float branch_angle = 1.5708f - 0.7854f + ((float)rand()/(float)RAND_MAX) * (0.7854f * 2);
+                // branch_angle now is in [0.7854, 2.3562] radians (approx. [45°,135°]).
+                int branch_length = 50 + rand() % 51; // Length between 50 and 100 pixels.
+                int branch_endX = start.x + (int)(branch_length * cosf(branch_angle));
+                int branch_endY = start.y + (int)(branch_length * sinf(branch_angle));
+                if (branch_endX < 0) branch_endX = 0;
+                if (branch_endX >= g_screen_width) branch_endX = g_screen_width - 1;
+                // Make sure the branch goes downward from its starting point.
+                if (branch_endY < start.y + 1) branch_endY = start.y + 1;
+                if (branch_endY >= g_screen_height) branch_endY = g_screen_height - 1;
+                int branch_num_points = 0;
+                SDL_Point *branch_points = generate_fractal_lightning_points(start.x, start.y, branch_endX, branch_endY, initial_displacement / 2.0f, 3, &branch_num_points);
+                if (branch_points && branch_num_points >= 2) {
+                    l->branches[l->num_branches].points = branch_points;
+                    l->branches[l->num_branches].num_points = branch_num_points;
+                    l->num_branches++;
+                } else if (branch_points) {
+                    free(branch_points);
+                }
+            }
+        }
     }
     
     return l;
 }
 
-void draw_thick_line(SDL_Renderer *renderer, int x1, int y1, int x2, int y2, int thickness, SDL_Color color) {
+void draw_filled_thick_line(SDL_Renderer *renderer, float x1, float y1, float x2, float y2, float thickness, SDL_Color color) {
     float dx = x2 - x1;
     float dy = y2 - y1;
     float len = sqrtf(dx * dx + dy * dy);
     if (len == 0) return;
     float udx = dx / len;
     float udy = dy / len;
-    // Perpendicular vector for offset direction.
-    float px = -udy;
-    float py = udx;
+    float half_thickness = thickness / 2.0f;
+    // Perpendicular vector for offset
+    float px = -udy * half_thickness;
+    float py = udx * half_thickness;
     
-    int half = thickness / 2;
-    for (int offset = -half; offset <= half; offset++) {
-        int ox1 = x1 + (int)(px * offset);
-        int oy1 = y1 + (int)(py * offset);
-        int ox2 = x2 + (int)(px * offset);
-        int oy2 = y2 + (int)(py * offset);
-        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-        SDL_RenderDrawLine(renderer, ox1, oy1, ox2, oy2);
+    // Define the four vertices of the quad
+    SDL_Vertex vertices[4];
+    vertices[0].position.x = x1 + px;
+    vertices[0].position.y = y1 + py;
+    vertices[1].position.x = x2 + px;
+    vertices[1].position.y = y2 + py;
+    vertices[2].position.x = x2 - px;
+    vertices[2].position.y = y2 - py;
+    vertices[3].position.x = x1 - px;
+    vertices[3].position.y = y1 - py;
+    
+    // Set vertex colors
+    for (int i = 0; i < 4; i++) {
+        vertices[i].color = color;
     }
+    
+    // Define two triangles to fill the quad
+    int indices[6] = {0, 1, 2, 0, 2, 3};
+    
+    SDL_RenderGeometry(renderer, NULL, vertices, 4, indices, 6);
 }
 
 void draw_glowing_lightning_line(SDL_Renderer *renderer, int x1, int y1, int x2, int y2, int base_thickness, SDL_Color baseColor) {
     SDL_Color glowColor = baseColor;
     // Reduce alpha for the glow layers.
     glowColor.a = (Uint8)(baseColor.a * 0.5);
-    // Draw outer glow layers.
-    draw_thick_line(renderer, x1, y1, x2, y2, base_thickness + 6, glowColor);
-    draw_thick_line(renderer, x1, y1, x2, y2, base_thickness + 4, glowColor);
+    // Draw outer glow layers with slightly thicker lines.
+    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2, base_thickness + 6, glowColor);
+    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2, base_thickness + 4, glowColor);
     // Draw the main lightning line.
-    draw_thick_line(renderer, x1, y1, x2, y2, base_thickness, baseColor);
+    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2, base_thickness, baseColor);
 }
 
 void draw_lightning(LightningEffect *l) {
@@ -434,20 +486,35 @@ void draw_lightning(LightningEffect *l) {
     Uint8 alpha = (Uint8)(255 * alpha_factor);
     SDL_Color white = {255, 255, 255, alpha};
     int base_thickness = 3; // Base thickness for the main lightning line.
-    
-    // Draw the main bolt with the glowing effect.
+
+    // Draw the main bolt with a glowing effect.
     for (int i = 0; i < l->num_points - 1; i++) {
-        draw_glowing_lightning_line(renderer, l->points[i].x, l->points[i].y,
-                                             l->points[i+1].x, l->points[i+1].y,
-                                             base_thickness, white);
+         float t = 1.0f;
+         // Taper the endpoints: the very first and last segments are drawn thinner.
+         if (i == 0 || i == l->num_points - 2) {
+             t = 0.5f;
+         }
+         int seg_thickness = (int)(base_thickness * t);
+         if(seg_thickness < 1) seg_thickness = 1;
+         draw_glowing_lightning_line(renderer,
+                                     l->points[i].x, l->points[i].y,
+                                     l->points[i+1].x, l->points[i+1].y,
+                                     seg_thickness, white);
     }
     // Draw the pre‑computed branches.
     for (int i = 0; i < l->num_branches; i++) {
          LightningBranch branch = l->branches[i];
          for (int j = 0; j < branch.num_points - 1; j++) {
-              draw_glowing_lightning_line(renderer, branch.points[j].x, branch.points[j].y,
-                                                 branch.points[j+1].x, branch.points[j+1].y,
-                                                 base_thickness, white);
+              float t = 1.0f;
+              if (j == 0 || j == branch.num_points - 2) {
+                  t = 0.5f;
+              }
+              int seg_thickness = (int)(base_thickness * t);
+              if(seg_thickness < 1) seg_thickness = 1;
+              draw_glowing_lightning_line(renderer,
+                                          branch.points[j].x, branch.points[j].y,
+                                          branch.points[j+1].x, branch.points[j+1].y,
+                                          seg_thickness, white);
          }
     }
 }
@@ -475,9 +542,14 @@ void main_loop(void *arg) {
     if (lightning) {
         lightning->timer -= delta;
         if (lightning->effect_type == 1) { 
-            // For a full screen flash, fill the screen with white.
+            // Fading full-screen flash effect.
+            float alpha_factor = lightning->timer / lightning->initial_timer;
+            if (alpha_factor < 0) { 
+                alpha_factor = 0;
+            }
+            Uint8 fade_alpha = (Uint8)(255 * alpha_factor);
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, fade_alpha);
             SDL_RenderFillRect(renderer, NULL);
         } else {
             // Draw the bolt with glowing, thick lines.
@@ -487,7 +559,7 @@ void main_loop(void *arg) {
         if (lightning->timer <= 0) {
             free(lightning->points);
             for (int i = 0; i < lightning->num_branches; i++) {
-                 free(lightning->branches[i].points);
+                free(lightning->branches[i].points);
             }
             free(lightning->branches);
             free(lightning);
