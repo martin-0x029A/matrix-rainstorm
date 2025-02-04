@@ -4,3 +4,10 @@ index.data
 
 # macOS system files
 .DS_Store
+
+
+matrix_storm_native
+
+# Valgrind
+valgrind.sh
+valgrind.log
