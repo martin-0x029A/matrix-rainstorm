@@ -4,7 +4,7 @@ A Matrix-style rainstorm animation written in C, now packed with enhanced physic
 
 ## 🎮 Preview
 
-Check out the live demo: [Matrix Storm Effect](https://matrix-storm-d7z.pages.dev/)
+Check out the live demo: [Matrix Storm Effect](https://matrix-rainstorm.pages.dev/)
 
 ## ✨ Features
 

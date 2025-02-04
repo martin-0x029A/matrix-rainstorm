@@ -1,1 +1,6 @@
+# WebAssembly build artifacts
+index.wasm
+index.data
+
+# macOS system files
 .DS_Store
