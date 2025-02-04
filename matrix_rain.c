@@ -203,8 +203,8 @@ void destroy_column(Column *col) {
 void init_unicode_textures(void) {
     for (int i = 0; i < NUM_UNICODE_CHARS; i++) {
         SDL_Color white = { 255, 255, 255, 255 };
-        /* Render UTF-8 string to surface */
-        SDL_Surface *surf = TTF_RenderUTF8_Solid(font, unicode_chars[i], white);
+        /* Render using blended rendering for anti-aliased text */
+        SDL_Surface *surf = TTF_RenderUTF8_Blended(font, unicode_chars[i], white);
         if (!surf) {
             printf("Failed to render '%s': %s\n", unicode_chars[i], TTF_GetError());
             continue;
@@ -267,17 +267,22 @@ float get_wind_factor(float col_x) {
 void update_columns(float delta) {
     size_t write_index = 0;
     int extended_margin = char_height * 50;  /* Retain columns within extended bounds */
-    
+
+    // Precompute tan of wind angle to avoid repetitive conversion
+    float wind_angle_rad = current_wind_angle * M_PI / 180.0f;
+    float tan_wind = tanf(wind_angle_rad);
+
     for (size_t i = 0; i < num_columns; i++) {
         Column *col = columns[i];
 
         /* Apply gravity */
         col->vy += GRAVITY * delta;
-        if (col->vy > TERMINAL_VELOCITY) col->vy = TERMINAL_VELOCITY;
+        if (col->vy > TERMINAL_VELOCITY)
+            col->vy = TERMINAL_VELOCITY;
 
-        /* Adjust horizontal velocity based on wind with a staggered (swishing) effect */
-        float target_vx = tan(current_wind_angle * M_PI / 180.0f) * col->vy;
-        float wind_factor = get_wind_factor(col->x);  // Compute per-column delay based on its x coordinate.
+        /* Adjust horizontal velocity based on wind, using precomputed tan value */
+        float target_vx = tan_wind * col->vy;
+        float wind_factor = get_wind_factor(col->x);
         col->vx += (target_vx - col->vx) * WIND_RESPONSE * wind_factor * delta;
 
         /* Update position */
@@ -288,17 +293,18 @@ void update_columns(float delta) {
         col->char_update_timer += delta;
         if (col->char_update_timer > 0.1f) {
             for (int j = 0; j < col->length; j++) {
-                if (rand() % 2 == 0) {
+                if (rand() % 2 == 0)
                     col->indices[j] = random_unicode_index();
-                }
             }
             col->char_update_timer = 0.0f;
         }
 
-        /* Compute fall angle and letter offsets */
+        /* Compute fall angle and cache sine and cosine values */
         float fall_angle = atan2(col->vx, col->vy);
-        float dx = -char_height * sin(fall_angle);
-        float dy = -char_height * cos(fall_angle);
+        float sine = sinf(fall_angle);
+        float cosine = cosf(fall_angle);
+        float dx = -char_height * sine;
+        float dy = -char_height * cosine;
 
         /* Calculate bounding box for the column */
         float letter0_x = col->x;
@@ -333,12 +339,13 @@ void update_columns(float delta) {
                 if (new_columns) {
                     columns = new_columns;
                     columns_capacity = new_capacity;
+                    columns[num_columns++] = newcol;
                 } else {
                     destroy_column(newcol);
-                    return;
                 }
+            } else {
+                columns[num_columns++] = newcol;
             }
-            columns[num_columns++] = newcol;
         }
     }
 }
@@ -426,62 +433,81 @@ void handle_events(void) {
 
 /* Lightning Effect Functions */
 
-/* Generate fractal points for a lightning bolt */
+/* Helper function: recursively perform midpoint displacement.
+ * pts: preallocated array of SDL_Point with indices [start, end]
+ * start, end: indices in pts representing the segment endpoints
+ * depth: remaining recursion depth (each level halves the displacement)
+ * displacement: current displacement magnitude
+ */
+static void midpoint_displacement(SDL_Point* pts, int start, int end, int depth, float displacement) {
+    if (depth <= 0 || end - start < 2)
+        return;
+
+    int mid = (start + end) / 2;
+    SDL_Point A = pts[start];
+    SDL_Point B = pts[end];
+
+    float midX = (A.x + B.x) / 2.0f;
+    float midY = (A.y + B.y) / 2.0f;
+
+    float dx = (float)(B.x - A.x);
+    float dy = (float)(B.y - A.y);
+    float norm = sqrtf(dx * dx + dy * dy);
+    float perpX = 0.0f, perpY = 0.0f;
+    if (norm != 0) {
+        perpX = -dy / norm;
+        perpY = dx / norm;
+    }
+
+    float effective_range = displacement;
+    if (fabsf((float)(B.x - A.x)) > 0.001f && fabsf(perpX) > 1e-6f) {
+        float max_allowed = (fabsf((float)(B.x - A.x)) / 2.0f) / fabsf(perpX);
+        effective_range = fmin(displacement, max_allowed);
+    }
+    float random_offset = ((float)rand() / (float)RAND_MAX) * 2.0f * effective_range - effective_range;
+    midX += perpX * random_offset;
+    midY += perpY * random_offset;
+
+    if (midY < A.y + 1) midY = A.y + 1;
+    if (midY > B.y - 1) midY = B.y - 1;
+
+    pts[mid].x = (int)midX;
+    pts[mid].y = (int)midY;
+
+    midpoint_displacement(pts, start, mid, depth - 1, displacement / 2.0f);
+    midpoint_displacement(pts, mid, end, depth - 1, displacement / 2.0f);
+}
+
+/* Optimized generate_fractal_lightning_points: preallocate the final array size
+ * and fill it recursively.
+ *
+ * Parameters:
+ *   startX, startY - starting coordinates for the lightning bolt
+ *   endX, endY     - ending coordinates for the lightning bolt
+ *   displacement - initial displacement magnitude
+ *   detail       - recursion depth (determines final point count: 2^detail + 1)
+ *   num_points   - output parameter; final number of points generated
+ *
+ * Returns:
+ *   Array of SDL_Point with the generated lightning bolt,
+ *   or NULL on allocation failure.
+ */
 SDL_Point* generate_fractal_lightning_points(int startX, int startY, int endX, int endY,
                                                float displacement, int detail, int *num_points) {
-    int current_count = 2;
-    SDL_Point *points = malloc(current_count * sizeof(SDL_Point));
-    if (!points) return NULL;
-    points[0].x = startX; points[0].y = startY;
-    points[1].x = endX;   points[1].y = endY;
-    
-    for (int i = 0; i < detail; i++) {
-        int new_count = current_count * 2 - 1;
-        SDL_Point *new_points = malloc(new_count * sizeof(SDL_Point));
-        if (!new_points) {
-            free(points);
-            return NULL;
-        }
-        new_points[0] = points[0];
-        for (int j = 0; j < current_count - 1; j++) {
-            SDL_Point A = points[j];
-            SDL_Point B = points[j+1];
-            float midX = (A.x + B.x) / 2.0f;
-            float midY = (A.y + B.y) / 2.0f;
-            
-            float dx = B.x - A.x;
-            float dy = B.y - A.y;
-            float norm = sqrtf(dx * dx + dy * dy);
-            float perpX = 0, perpY = 0;
-            if (norm != 0) {
-                perpX = -dy / norm;
-                perpY = dx / norm;
-            }
-            
-            /* Limit offset magnitude */
-            float effective_range = displacement;
-            if (fabs((float)(B.x - A.x)) > 0.001f && fabs(perpX) > 1e-6) {
-                float max_allowed = (fabs((float)(B.x - A.x)) / 2.0f) / fabs(perpX);
-                effective_range = fmin(displacement, max_allowed);
-            }
-            float random_offset = ((float)rand() / (float)RAND_MAX) * 2.0f * effective_range - effective_range;
-            midX += perpX * random_offset;
-            midY += perpY * random_offset;
-            
-            /* Enforce vertical ordering */
-            if (midY < A.y + 1) midY = A.y + 1;
-            if (midY > B.y - 1) midY = B.y - 1;
-            
-            new_points[j * 2 + 1].x = (int)midX;
-            new_points[j * 2 + 1].y = (int)midY;
-            new_points[j * 2 + 2] = B;
-        }
-        free(points);
-        points = new_points;
-        current_count = new_count;
-        displacement /= 2.0f;
-    }
-    *num_points = current_count;
+    /* Final count is (2^detail) + 1 */
+    int final_count = (1 << detail) + 1;
+    SDL_Point *points = malloc(final_count * sizeof(SDL_Point));
+    if (!points)
+        return NULL;
+
+    points[0].x = startX;
+    points[0].y = startY;
+    points[final_count - 1].x = endX;
+    points[final_count - 1].y = endY;
+
+    midpoint_displacement(points, 0, final_count - 1, detail, displacement);
+
+    *num_points = final_count;
     return points;
 }
 
@@ -489,60 +515,77 @@ SDL_Point* generate_fractal_lightning_points(int startX, int startY, int endX, i
 LightningEffect* generate_lightning() {
     LightningEffect* l = malloc(sizeof(LightningEffect));
     if (!l) return NULL;
-    /* 50% chance for full-screen flash (effect_type 1), otherwise bolt (0) */
-    l->effect_type = (rand() % 2 == 0) ? 1 : 0;
-    float initial_displacement = 0.0f;
-    if (l->effect_type == 1) {
+
+    // Decide effect type: 50% chance for full-screen flash (type 1) otherwise bolt (type 0)
+    if (rand() & 1) {
+        l->effect_type = 1;
         l->timer = 0.5f;
         l->initial_timer = 0.5f;
         l->points = NULL;
         l->num_points = 0;
+        l->branches = NULL;
+        l->num_branches = 0;
     } else {
+        l->effect_type = 0;
         l->timer = 1.5f;
         l->initial_timer = 1.5f;
-        /* Generate fractal bolt */
         int startX = rand() % g_screen_width;
         int startY = 0;
         int endX = rand() % g_screen_width;
-        /* Target between 70% and 100% of screen height */
-        int endY = (g_screen_height * (70 + rand() % 31)) / 100;
-        initial_displacement = g_screen_width / 8.0f;
-        int detail = 6;  /* Recursion depth */
+        int endY = (g_screen_height * (70 + (rand() % 31))) / 100;
+        float initial_displacement = g_screen_width / 8.0f;
+        int detail = 6;  // Recursion depth; final point count = (1 << detail) + 1
         l->points = generate_fractal_lightning_points(startX, startY, endX, endY,
                                                       initial_displacement, detail, &l->num_points);
-    }
-    
-    /* Pre-allocate space for branches */
-    l->branches = malloc((l->num_points ? l->num_points : 1) * sizeof(LightningBranch));
-    l->num_branches = 0;
-    if (l->points && l->num_points > 1) {
-        for (int i = 0; i < l->num_points - 1; i++) {
-            if (rand() % 100 < 25) {  /* 25% chance to spawn a branch */
-                SDL_Point start = l->points[i];
-                /* Force branch to be mostly downward */
-                float branch_angle = 1.5708f - 0.7854f + ((float)rand()/(float)RAND_MAX) * (0.7854f * 2);
-                int branch_length = 50 + rand() % 51;  /* 50 to 100 pixels */
-                int branch_endX = start.x + (int)(branch_length * cosf(branch_angle));
-                int branch_endY = start.y + (int)(branch_length * sinf(branch_angle));
-                if (branch_endX < 0) branch_endX = 0;
-                if (branch_endX >= g_screen_width) branch_endX = g_screen_width - 1;
-                if (branch_endY < start.y + 1) branch_endY = start.y + 1;
-                if (branch_endY >= g_screen_height) branch_endY = g_screen_height - 1;
-                int branch_num_points = 0;
-                SDL_Point *branch_points = generate_fractal_lightning_points(start.x, start.y,
-                                                                             branch_endX, branch_endY,
-                                                                             initial_displacement / 2.0f, 3, &branch_num_points);
-                if (branch_points && branch_num_points >= 2) {
-                    l->branches[l->num_branches].points = branch_points;
-                    l->branches[l->num_branches].num_points = branch_num_points;
-                    l->num_branches++;
-                } else if (branch_points) {
-                    free(branch_points);
+        // Process branches only if a valid bolt is generated.
+        if (l->points && l->num_points > 1) {
+            int num_candidates = l->num_points - 1;
+            int candidate_count = 0;
+            int *candidates = malloc(num_candidates * sizeof(int));
+            if (!candidates) {
+                l->branches = NULL;
+                l->num_branches = 0;
+            } else {
+                // First pass: determine which segments will spawn a branch (25% chance)
+                for (int i = 0; i < num_candidates; i++) {
+                    candidates[i] = (rand() % 100 < 25) ? 1 : 0;
+                    candidate_count += candidates[i];
                 }
+                // Allocate exactly the number needed
+                l->branches = candidate_count > 0 ? malloc(candidate_count * sizeof(LightningBranch)) : NULL;
+                l->num_branches = 0;
+                // Second pass: actually generate the branches for qualifying segments
+                for (int i = 0; i < num_candidates; i++) {
+                    if (candidates[i]) {
+                        SDL_Point start = l->points[i];
+                        float branch_angle = 1.5708f - 0.7854f + ((float)rand() / (float)RAND_MAX) * (0.7854f * 2);
+                        int branch_length = 50 + (rand() % 51);  /* 50 to 100 pixels */
+                        int branch_endX = start.x + (int)(branch_length * cosf(branch_angle));
+                        int branch_endY = start.y + (int)(branch_length * sinf(branch_angle));
+                        if (branch_endX < 0) branch_endX = 0;
+                        if (branch_endX >= g_screen_width) branch_endX = g_screen_width - 1;
+                        if (branch_endY < start.y + 1) branch_endY = start.y + 1;
+                        if (branch_endY >= g_screen_height) branch_endY = g_screen_height - 1;
+                        int branch_num_points = 0;
+                        SDL_Point *branch_points = generate_fractal_lightning_points(start.x, start.y,
+                                                                                     branch_endX, branch_endY,
+                                                                                     initial_displacement / 2.0f, 3, &branch_num_points);
+                        if (branch_points && branch_num_points >= 2) {
+                            l->branches[l->num_branches].points = branch_points;
+                            l->branches[l->num_branches].num_points = branch_num_points;
+                            l->num_branches++;
+                        } else if (branch_points) {
+                            free(branch_points);
+                        }
+                    }
+                }
+                free(candidates);
             }
+        } else {
+            l->branches = NULL;
+            l->num_branches = 0;
         }
     }
-    
     return l;
 }
 
@@ -556,77 +599,119 @@ LightningEffect* generate_lightning() {
 void draw_smooth_lightning_bolt(LightningEffect *l, int max_thickness, SDL_Color color) {
     int n = l->num_points;
     if (n < 2) return;
-
     int vertex_count = n * 2;
-    SDL_Vertex *vertices = malloc(vertex_count * sizeof(SDL_Vertex));
-    if (!vertices) return;
+    int indices_count = (vertex_count - 2) * 3;
 
-    // Set the minimum thickness at the edges (pointy ends)
-    float min_thickness = 1.0f;  // adjust as needed
+    // Use stack allocation if the vertex count is small; fallback to dynamic allocation otherwise.
+    if (vertex_count <= 256) {
+        SDL_Vertex vertices[vertex_count];
+        int indices[indices_count];
+        const float min_thickness = 1.0f;  // Minimum thickness at the bolt's edges
 
-    for (int i = 0; i < n; i++) {
-        SDL_Point p = l->points[i];
-        // Compute the progress along the bolt [0, 1]
-        float progress = (float)i / (n - 1);
-        // Linear taper: maximum at center, min_thickness at the ends.
-        // (1 - |2*progress - 1|) gives 0 at 0 and 1, and 1 at 0.5.
-        float local_thickness = min_thickness + (max_thickness - min_thickness) * (1.0f - fabs(2.0f * progress - 1.0f));
+        for (int i = 0; i < n; i++) {
+            SDL_Point p = l->points[i];
+            float progress = (float)i / (n - 1);
+            float local_thickness = min_thickness + (max_thickness - min_thickness) * (1.0f - fabsf(2.0f * progress - 1.0f));
 
-        float tangent_x, tangent_y;
-        if (i == 0) {
-            tangent_x = l->points[i+1].x - p.x;
-            tangent_y = l->points[i+1].y - p.y;
-        } else if (i == n - 1) {
-            tangent_x = p.x - l->points[i-1].x;
-            tangent_y = p.y - l->points[i-1].y;
-        } else {
-            tangent_x = l->points[i+1].x - l->points[i-1].x;
-            tangent_y = l->points[i+1].y - l->points[i-1].y;
+            float tangent_x, tangent_y;
+            if (i == 0) {
+                tangent_x = l->points[i+1].x - p.x;
+                tangent_y = l->points[i+1].y - p.y;
+            } else if (i == n - 1) {
+                tangent_x = p.x - l->points[i-1].x;
+                tangent_y = p.y - l->points[i-1].y;
+            } else {
+                tangent_x = l->points[i+1].x - l->points[i-1].x;
+                tangent_y = l->points[i+1].y - l->points[i-1].y;
+            }
+            float len = sqrtf(tangent_x * tangent_x + tangent_y * tangent_y);
+            if (len == 0) { tangent_x = 1.0f; tangent_y = 0.0f; len = 1.0f; }
+            tangent_x /= len;
+            tangent_y /= len;
+
+            float normal_x = -tangent_y;
+            float normal_y = tangent_x;
+
+            vertices[2 * i].position.x = p.x + normal_x * local_thickness;
+            vertices[2 * i].position.y = p.y + normal_y * local_thickness;
+            vertices[2 * i].color = color;
+
+            vertices[2 * i + 1].position.x = p.x - normal_x * local_thickness;
+            vertices[2 * i + 1].position.y = p.y - normal_y * local_thickness;
+            vertices[2 * i + 1].color = color;
         }
-        float len = sqrtf(tangent_x * tangent_x + tangent_y * tangent_y);
-        if (len == 0) { tangent_x = 1; tangent_y = 0; len = 1; }
-        tangent_x /= len;
-        tangent_y /= len;
 
-        // Compute normal vector (perpendicular to the tangent)
-        float normal_x = -tangent_y;
-        float normal_y = tangent_x;
+        int idx = 0;
+        for (int i = 0; i < vertex_count - 2; i++) {
+            if (i % 2 == 0) {
+                indices[idx++] = i;
+                indices[idx++] = i + 1;
+                indices[idx++] = i + 2;
+            } else {
+                indices[idx++] = i + 1;
+                indices[idx++] = i;
+                indices[idx++] = i + 2;
+            }
+        }
 
-        // Create two vertices offset in opposite directions by the local thickness
-        vertices[2 * i].position.x     = p.x + normal_x * local_thickness;
-        vertices[2 * i].position.y     = p.y + normal_y * local_thickness;
-        vertices[2 * i].color          = color;
+        SDL_RenderGeometry(renderer, NULL, vertices, vertex_count, indices, indices_count);
+    } else {
+        SDL_Vertex *vertices = malloc(vertex_count * sizeof(SDL_Vertex));
+        if (!vertices) return;
+        int *indices = malloc(indices_count * sizeof(int));
+        if (!indices) { free(vertices); return; }
 
-        vertices[2 * i + 1].position.x = p.x - normal_x * local_thickness;
-        vertices[2 * i + 1].position.y = p.y - normal_y * local_thickness;
-        vertices[2 * i + 1].color      = color;
-    }
+        const float min_thickness = 1.0f;
+        for (int i = 0; i < n; i++) {
+            SDL_Point p = l->points[i];
+            float progress = (float)i / (n - 1);
+            float local_thickness = min_thickness + (max_thickness - min_thickness) * (1.0f - fabsf(2.0f * progress - 1.0f));
 
-    // Build indices from the triangle strip by converting to triangles.
-    int num_triangles = vertex_count - 2;
-    int indices_count = num_triangles * 3;
-    int *indices = malloc(indices_count * sizeof(int));
-    if (!indices) {
+            float tangent_x, tangent_y;
+            if (i == 0) {
+                tangent_x = l->points[i+1].x - p.x;
+                tangent_y = l->points[i+1].y - p.y;
+            } else if (i == n - 1) {
+                tangent_x = p.x - l->points[i-1].x;
+                tangent_y = p.y - l->points[i-1].y;
+            } else {
+                tangent_x = l->points[i+1].x - l->points[i-1].x;
+                tangent_y = l->points[i+1].y - l->points[i-1].y;
+            }
+            float len = sqrtf(tangent_x * tangent_x + tangent_y * tangent_y);
+            if (len == 0) { tangent_x = 1.0f; tangent_y = 0.0f; len = 1.0f; }
+            tangent_x /= len;
+            tangent_y /= len;
+
+            float normal_x = -tangent_y;
+            float normal_y = tangent_x;
+
+            vertices[2 * i].position.x = p.x + normal_x * local_thickness;
+            vertices[2 * i].position.y = p.y + normal_y * local_thickness;
+            vertices[2 * i].color = color;
+
+            vertices[2 * i + 1].position.x = p.x - normal_x * local_thickness;
+            vertices[2 * i + 1].position.y = p.y - normal_y * local_thickness;
+            vertices[2 * i + 1].color = color;
+        }
+
+        int idx = 0;
+        for (int i = 0; i < vertex_count - 2; i++) {
+            if (i % 2 == 0) {
+                indices[idx++] = i;
+                indices[idx++] = i + 1;
+                indices[idx++] = i + 2;
+            } else {
+                indices[idx++] = i + 1;
+                indices[idx++] = i;
+                indices[idx++] = i + 2;
+            }
+        }
+        
+        SDL_RenderGeometry(renderer, NULL, vertices, vertex_count, indices, indices_count);
         free(vertices);
-        return;
+        free(indices);
     }
-    int idx = 0;
-    for (int i = 0; i < vertex_count - 2; i++) {
-        if (i % 2 == 0) {
-            indices[idx++] = i;
-            indices[idx++] = i + 1;
-            indices[idx++] = i + 2;
-        } else {
-            indices[idx++] = i + 1;
-            indices[idx++] = i;
-            indices[idx++] = i + 2;
-        }
-    }
-
-    SDL_RenderGeometry(renderer, NULL, vertices, vertex_count, indices, indices_count);
-
-    free(vertices);
-    free(indices);
 }
 
 /*
@@ -701,12 +786,12 @@ void draw_lightning(LightningEffect *l) {
             for (int j = 0; j < vertex_count - 2; j++) {
                 if(j % 2 == 0) {
                     indices[idx++] = j;
-                    indices[idx++] = j+1;
-                    indices[idx++] = j+2;
+                    indices[idx++] = j + 1;
+                    indices[idx++] = j + 2;
                 } else {
-                    indices[idx++] = j+1;
+                    indices[idx++] = j + 1;
                     indices[idx++] = j;
-                    indices[idx++] = j+2;
+                    indices[idx++] = j + 2;
                 }
             }
             SDL_RenderGeometry(renderer, NULL, vertices, vertex_count, indices, indices_count);
@@ -750,7 +835,7 @@ void main_loop(void *arg) {
     SDL_SetRenderTarget(renderer, canvas);
     /* Apply fade effect for trail */
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 100);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 200);
     SDL_RenderFillRect(renderer, NULL);
     
     update_columns(delta);
@@ -793,6 +878,9 @@ void main_loop(void *arg) {
 
 /* Main entry point */
 int main(int argc, char *argv[]) {
+    // Enable linear texture filtering for smoother scaling
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+
     printf("Matrix Rain starting...\n");
     srand((unsigned)time(NULL));
     
@@ -811,6 +899,9 @@ int main(int argc, char *argv[]) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#else
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 #endif
     
     /* Create SDL window */
