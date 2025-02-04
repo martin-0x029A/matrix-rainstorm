@@ -218,6 +218,51 @@ void init_unicode_textures(void) {
     }
 }
 
+/* 
+ * Compute the wind influence factor for a column based on its x position.
+ * During a wind transition, a "wave" propagates across the screen:
+ *   - If the wind is increasing (target_wind_angle > wind_start_angle), the wind
+ *     comes from the left. Columns with x values below the wave front get full effect.
+ *   - If the wind is decreasing (target_wind_angle < wind_start_angle), the wind 
+ *     comes from the right.
+ *
+ * The transition zone (over which columns gradually come under wind's influence) is
+ * made dynamic based on the magnitude of the change in wind angle.
+ */
+float get_wind_factor(float col_x) {
+    if (!wind_in_transition)
+        return 1.0f;  // if not in transition, all columns receive full effect
+
+    float wave_progress = wind_transition_timer / wind_transition_duration;  // [0,1]
+    float angle_diff = fabs(target_wind_angle - wind_start_angle);
+    // A larger wind change should cause a faster (shorter) transition zone.
+    float zone = 50.0f - (angle_diff * 0.2f);
+    if (zone < 10.0f)
+        zone = 10.0f;
+
+    if (target_wind_angle > wind_start_angle) {
+        // Wind emerges from the left; wave front moves right.
+        float wave_front = wave_progress * g_screen_width;
+        if (col_x <= wave_front) {
+            return 1.0f;
+        } else if (col_x < wave_front + zone) {
+            return 1.0f - ((col_x - wave_front) / zone);
+        } else {
+            return 0.0f;
+        }
+    } else {
+        // Wind emerges from the right; wave front moves left.
+        float wave_front = g_screen_width - (wave_progress * g_screen_width);
+        if (col_x >= wave_front) {
+            return 1.0f;
+        } else if (col_x > wave_front - zone) {
+            return 1.0f - ((wave_front - col_x) / zone);
+        } else {
+            return 0.0f;
+        }
+    }
+}
+
 /* Update falling columns: position, velocity, and character content */
 void update_columns(float delta) {
     size_t write_index = 0;
@@ -230,9 +275,10 @@ void update_columns(float delta) {
         col->vy += GRAVITY * delta;
         if (col->vy > TERMINAL_VELOCITY) col->vy = TERMINAL_VELOCITY;
 
-        /* Adjust horizontal velocity based on wind */
+        /* Adjust horizontal velocity based on wind with a staggered (swishing) effect */
         float target_vx = tan(current_wind_angle * M_PI / 180.0f) * col->vy;
-        col->vx += (target_vx - col->vx) * WIND_RESPONSE * delta;
+        float wind_factor = get_wind_factor(col->x);  // Compute per-column delay based on its x coordinate.
+        col->vx += (target_vx - col->vx) * WIND_RESPONSE * wind_factor * delta;
 
         /* Update position */
         col->x += col->vx * delta;
