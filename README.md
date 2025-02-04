@@ -1,10 +1,10 @@
-# Matrix Rain 🌧
+# Matrix Storm ⛈️
 
-A Matrix-style rain animation written in C, now packed with enhanced physics effects and fractal lightning. Optimized for WebAssembly (WASM) and powered by SDL2, this project is perfect for creating an engaging background effect on your website.
+A Matrix-style rainstorm animation written in C, now packed with enhanced physics effects and fractal lightning. Optimized for WebAssembly (WASM) and powered by SDL2, this project is perfect for creating an engaging background effect on your website.
 
 ## 🎮 Preview
 
-Check out the live demo: [Matrix Rain Effect](https://matrix-rain-d7z.pages.dev/matrix_rain)
+Check out the live demo: [Matrix Storm Effect](https://matrix-storm-d7z.pages.dev/)
 
 ## ✨ Features
 
@@ -30,8 +30,8 @@ Check out the live demo: [Matrix Rain Effect](https://matrix-rain-d7z.pages.dev/
    python -m http.server
    ```
 
-2. Open `matrix_rain.html` in your browser.
-3. Enjoy the enhanced Matrix rain effect with dynamic lightning and realistic physics!
+2. Open `index.html` in your browser.
+3. Enjoy the enhanced Matrix rainstorm effect with dynamic lightning and realistic physics!
 
 ## 🛠 Development
 
@@ -40,10 +40,10 @@ Check out the live demo: [Matrix Rain Effect](https://matrix-rain-d7z.pages.dev/
 To customize and recompile the project, use the following compile command:
 
 ```sh:README.md
-emcc matrix_rain.c -O2 -s USE_SDL=2 -s USE_SDL_TTF=2 -s USE_WEBGL2=1 \
+emcc matrix_storm.c -O2 -s USE_SDL=2 -s USE_SDL_TTF=2 -s USE_WEBGL2=1 \
   --shell-file minimal.html \
   --preload-file matrix_font_subset.ttf \
-  -o matrix_rain.html
+  -o index.html
 ```
 
 This command compiles the code with WebGL2 support, ensuring improved graphics performance on modern browsers.
