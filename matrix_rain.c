@@ -500,94 +500,173 @@ LightningEffect* generate_lightning() {
     return l;
 }
 
-/* Draw a thick filled line */
-void draw_filled_thick_line(SDL_Renderer *renderer, float x1, float y1, float x2, float y2,
-                            float thickness, SDL_Color color) {
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-    float len = sqrtf(dx * dx + dy * dy);
-    if (len == 0) return;
-    float udx = dx / len;
-    float udy = dy / len;
-    float half_thickness = thickness / 2.0f;
-    /* Compute perpendicular offset */
-    float px = -udy * half_thickness;
-    float py = udx * half_thickness;
-    
-    /* Define quad vertices */
-    SDL_Vertex vertices[4];
-    vertices[0].position.x = x1 + px;
-    vertices[0].position.y = y1 + py;
-    vertices[1].position.x = x2 + px;
-    vertices[1].position.y = y2 + py;
-    vertices[2].position.x = x2 - px;
-    vertices[2].position.y = y2 - py;
-    vertices[3].position.x = x1 - px;
-    vertices[3].position.y = y1 - py;
-    
-    /* Set vertex color */
-    for (int i = 0; i < 4; i++) {
-        vertices[i].color = color;
+/*
+ * New helper function: draw_smooth_lightning_bolt
+ *
+ * This version computes a varying thickness along the bolt: the thickness is
+ * highest in the center (at progress = 0.5) and tapers down to a specified minimum
+ * at the ends (progress = 0 and 1).
+ */
+void draw_smooth_lightning_bolt(LightningEffect *l, int max_thickness, SDL_Color color) {
+    int n = l->num_points;
+    if (n < 2) return;
+
+    int vertex_count = n * 2;
+    SDL_Vertex *vertices = malloc(vertex_count * sizeof(SDL_Vertex));
+    if (!vertices) return;
+
+    // Set the minimum thickness at the edges (pointy ends)
+    float min_thickness = 1.0f;  // adjust as needed
+
+    for (int i = 0; i < n; i++) {
+        SDL_Point p = l->points[i];
+        // Compute the progress along the bolt [0, 1]
+        float progress = (float)i / (n - 1);
+        // Linear taper: maximum at center, min_thickness at the ends.
+        // (1 - |2*progress - 1|) gives 0 at 0 and 1, and 1 at 0.5.
+        float local_thickness = min_thickness + (max_thickness - min_thickness) * (1.0f - fabs(2.0f * progress - 1.0f));
+
+        float tangent_x, tangent_y;
+        if (i == 0) {
+            tangent_x = l->points[i+1].x - p.x;
+            tangent_y = l->points[i+1].y - p.y;
+        } else if (i == n - 1) {
+            tangent_x = p.x - l->points[i-1].x;
+            tangent_y = p.y - l->points[i-1].y;
+        } else {
+            tangent_x = l->points[i+1].x - l->points[i-1].x;
+            tangent_y = l->points[i+1].y - l->points[i-1].y;
+        }
+        float len = sqrtf(tangent_x * tangent_x + tangent_y * tangent_y);
+        if (len == 0) { tangent_x = 1; tangent_y = 0; len = 1; }
+        tangent_x /= len;
+        tangent_y /= len;
+
+        // Compute normal vector (perpendicular to the tangent)
+        float normal_x = -tangent_y;
+        float normal_y = tangent_x;
+
+        // Create two vertices offset in opposite directions by the local thickness
+        vertices[2 * i].position.x     = p.x + normal_x * local_thickness;
+        vertices[2 * i].position.y     = p.y + normal_y * local_thickness;
+        vertices[2 * i].color          = color;
+
+        vertices[2 * i + 1].position.x = p.x - normal_x * local_thickness;
+        vertices[2 * i + 1].position.y = p.y - normal_y * local_thickness;
+        vertices[2 * i + 1].color      = color;
     }
-    
-    /* Render quad as two triangles */
-    int indices[6] = {0, 1, 2, 0, 2, 3};
-    
-    SDL_RenderGeometry(renderer, NULL, vertices, 4, indices, 6);
+
+    // Build indices from the triangle strip by converting to triangles.
+    int num_triangles = vertex_count - 2;
+    int indices_count = num_triangles * 3;
+    int *indices = malloc(indices_count * sizeof(int));
+    if (!indices) {
+        free(vertices);
+        return;
+    }
+    int idx = 0;
+    for (int i = 0; i < vertex_count - 2; i++) {
+        if (i % 2 == 0) {
+            indices[idx++] = i;
+            indices[idx++] = i + 1;
+            indices[idx++] = i + 2;
+        } else {
+            indices[idx++] = i + 1;
+            indices[idx++] = i;
+            indices[idx++] = i + 2;
+        }
+    }
+
+    SDL_RenderGeometry(renderer, NULL, vertices, vertex_count, indices, indices_count);
+
+    free(vertices);
+    free(indices);
 }
 
-/* Draw a lightning line with glowing effect */
-void draw_glowing_lightning_line(SDL_Renderer *renderer, int x1, int y1, int x2, int y2,
-                                 int base_thickness, SDL_Color baseColor) {
-    SDL_Color glowColor = baseColor;
-    /* Lower alpha for glow layers */
-    glowColor.a = (Uint8)(baseColor.a * 0.5);
-    /* Draw outer glow layers */
-    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2,
-                           base_thickness + 6, glowColor);
-    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2,
-                           base_thickness + 4, glowColor);
-    /* Draw the main line */
-    draw_filled_thick_line(renderer, (float)x1, (float)y1, (float)x2, (float)y2,
-                           base_thickness, baseColor);
-}
-
-/* Render the lightning effect and its branches */
+/*
+ * Updated draw_lightning function: renders both the main bolt and its branches
+ * using a smooth filled polygon with tapered thickness.
+ */
 void draw_lightning(LightningEffect *l) {
     /* Compute fade alpha */
     float alpha_factor = l->timer / l->initial_timer;
     Uint8 alpha = (Uint8)(255 * alpha_factor);
-    SDL_Color white = {255, 255, 255, alpha};
-    int base_thickness = 3;  /* Base line thickness */
+    SDL_Color white = { 255, 255, 255, alpha };
+    SDL_Color glowColor = white;
+    glowColor.a = (Uint8)(alpha * 0.5f); // glow with reduced alpha
 
-    /* Draw main bolt with glow */
-    for (int i = 0; i < l->num_points - 1; i++) {
-         float t = 1.0f;
-         if (i == 0 || i == l->num_points - 2) {
-             t = 0.5f;
-         }
-         int seg_thickness = (int)(base_thickness * t);
-         if(seg_thickness < 1) seg_thickness = 1;
-         draw_glowing_lightning_line(renderer,
-                                     l->points[i].x, l->points[i].y,
-                                     l->points[i+1].x, l->points[i+1].y,
-                                     seg_thickness, white);
-    }
-    /* Render branches */
+    int base_thickness = 3;  /* Maximum thickness at the center of the bolt */
+
+    /* Draw a smooth glowing bolt:
+     * First, draw an outer glow (using a higher max thickness),
+     * then draw the main bolt on top.
+     */
+    draw_smooth_lightning_bolt(l, base_thickness + 4, glowColor);
+    draw_smooth_lightning_bolt(l, base_thickness, white);
+
+    /* Draw branches with a similar tapering effect */
     for (int i = 0; i < l->num_branches; i++) {
-         LightningBranch branch = l->branches[i];
-         for (int j = 0; j < branch.num_points - 1; j++) {
-              float t = 1.0f;
-              if (j == 0 || j == branch.num_points - 2) {
-                  t = 0.5f;
-              }
-              int seg_thickness = (int)(base_thickness * t);
-              if(seg_thickness < 1) seg_thickness = 1;
-              draw_glowing_lightning_line(renderer,
-                                          branch.points[j].x, branch.points[j].y,
-                                          branch.points[j+1].x, branch.points[j+1].y,
-                                          seg_thickness, white);
-         }
+        LightningBranch branch = l->branches[i];
+        int n = branch.num_points;
+        if (n < 2)
+            continue;
+
+        int vertex_count = n * 2;
+        SDL_Vertex *vertices = malloc(vertex_count * sizeof(SDL_Vertex));
+        if (!vertices)
+            continue;
+
+        float min_thickness = 1.0f;  // minimum thickness at branch ends
+        for (int j = 0; j < n; j++) {
+            SDL_Point p = branch.points[j];
+            float progress = (float)j / (n - 1);
+            float local_thickness = min_thickness + (base_thickness - min_thickness) * (1.0f - fabs(2.0f * progress - 1.0f));
+
+            float tangent_x, tangent_y;
+            if (j == 0) {
+                tangent_x = branch.points[j+1].x - p.x;
+                tangent_y = branch.points[j+1].y - p.y;
+            } else if (j == n - 1) {
+                tangent_x = p.x - branch.points[j-1].x;
+                tangent_y = p.y - branch.points[j-1].y;
+            } else {
+                tangent_x = branch.points[j+1].x - branch.points[j-1].x;
+                tangent_y = branch.points[j+1].y - branch.points[j-1].y;
+            }
+            float len = sqrtf(tangent_x * tangent_x + tangent_y * tangent_y);
+            if (len == 0) { tangent_x = 1; tangent_y = 0; len = 1; }
+            tangent_x /= len;
+            tangent_y /= len;
+            float normal_x = -tangent_y;
+            float normal_y = tangent_x;
+
+            vertices[2*j].position.x     = p.x + normal_x * local_thickness;
+            vertices[2*j].position.y     = p.y + normal_y * local_thickness;
+            vertices[2*j].color          = white;
+            vertices[2*j+1].position.x   = p.x - normal_x * local_thickness;
+            vertices[2*j+1].position.y   = p.y - normal_y * local_thickness;
+            vertices[2*j+1].color        = white;
+        }
+        int num_triangles = vertex_count - 2;
+        int indices_count = num_triangles * 3;
+        int *indices = malloc(indices_count * sizeof(int));
+        if (indices) {
+            int idx = 0;
+            for (int j = 0; j < vertex_count - 2; j++) {
+                if(j % 2 == 0) {
+                    indices[idx++] = j;
+                    indices[idx++] = j+1;
+                    indices[idx++] = j+2;
+                } else {
+                    indices[idx++] = j+1;
+                    indices[idx++] = j;
+                    indices[idx++] = j+2;
+                }
+            }
+            SDL_RenderGeometry(renderer, NULL, vertices, vertex_count, indices, indices_count);
+            free(indices);
+        }
+        free(vertices);
     }
 }
 
@@ -625,7 +704,7 @@ void main_loop(void *arg) {
     SDL_SetRenderTarget(renderer, canvas);
     /* Apply fade effect for trail */
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 50);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 100);
     SDL_RenderFillRect(renderer, NULL);
     
     update_columns(delta);
